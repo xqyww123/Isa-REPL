@@ -1,0 +1,52 @@
+_require "basis.smi"
+
+structure UintScannerInt = struct
+  val scan : Word8Vector.vector -> Int.int
+end
+
+structure UintScannerLargeInt = struct
+  val scan : Word8Vector.vector -> LargeInt.int
+end
+
+structure IntScannerIntWord = struct
+  val scan : Word8Vector.vector -> Int.int
+end
+
+structure IntScannerIntLargeWord = struct
+  val scan : Word8Vector.vector -> Int.int
+end
+
+structure IntScannerLargeIntWord = struct
+  val scan : Word8Vector.vector -> LargeInt.int
+end
+
+structure IntScannerLargeIntLargeWord = struct
+  val scan : Word8Vector.vector -> LargeInt.int
+end
+
+functor UintPrinterIntWord(S : sig
+                             type outstream
+                             val output1 : outstream * Word8.word -> unit
+                           end) = struct
+  val print : Int.int -> int -> S.outstream -> unit
+end
+functor UintPrinterIntLargeWord(S : sig
+                             type outstream
+                             val output1 : outstream * Word8.word -> unit
+                           end) = struct
+  val print : Int.int -> int -> S.outstream -> unit
+end
+functor UintPrinterInfInt(S : sig
+                             type outstream
+                             val output1 : outstream * Word8.word -> unit
+                           end) = struct
+  val print : Int.int -> int -> S.outstream -> unit
+end
+
+structure BitScannerInt = struct
+  val scan : int -> int -> Word8Vector.vector -> Int.int
+end
+
+structure BitScannerLargeInt = struct
+  val scan : int -> int -> Word8Vector.vector -> LargeInt.int
+end

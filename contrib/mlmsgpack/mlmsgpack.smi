@@ -1,0 +1,229 @@
+_require "basis.smi"
+_require "mlmsgpack-aux.smi"
+_require "realprinter-default.smi"
+
+functor MessagePack(S : sig
+                      type instream
+                      type outstream
+                      val input1 : instream -> (Word8.word * instream) option
+                      val inputN : instream * int -> Word8Vector.vector * instream
+                      val output : outstream * Word8Vector.vector -> unit
+                      val output1 : outstream * Word8.word -> unit
+                    end) = struct
+  structure Pack = struct
+    type 'a packer (=boxed)
+
+    val doPack : 'a packer -> 'a -> S.outstream -> unit
+
+    val fromFn : ('a -> S.outstream -> unit) -> 'a packer
+
+    val packList   : 'a packer -> 'a list   packer
+    val packVector : 'a packer -> 'a vector packer
+    val packArray  : 'a packer -> 'a array  packer
+    val packArrayTabulate : 'a packer -> (int * (int -> 'a)) packer 
+
+    val packPair   : 'a packer * 'b packer -> ('a * 'b) packer
+    val packTuple3 : 'a packer * 'b packer * 'c packer -> ('a * 'b * 'c) packer
+    val packTuple4 : 'a packer * 'b packer * 'c packer * 'd packer -> ('a * 'b * 'c * 'd) packer
+    val packTuple5 : 'a packer * 'b packer * 'c packer * 'd packer * 'e packer -> ('a * 'b * 'c * 'd * 'e) packer
+    val packTuple6 : 'a packer * 'b packer * 'c packer * 'd packer * 'e packer * 'f packer -> ('a * 'b * 'c * 'd * 'e * 'f) packer
+
+    val packPairList : ('a packer * 'b packer) -> ('a * 'b) list packer
+    val packMapTabulate : ('a packer * 'b packer) -> (int * (int -> 'a * 'b)) packer
+
+    val packUnit   : unit packer
+    val packBool   : bool packer
+    val packInt    : int packer
+    val packReal   : real packer
+
+    val packString : string packer
+    val packBytesToStr : Word8Vector.vector packer
+    val packBytes  : Word8Vector.vector packer
+
+    val packExtOfType : int -> Word8Vector.vector packer
+
+    val packOption : 'a packer -> 'a option packer
+  end
+
+  structure Unpack = struct
+    type 'a unpacker (=boxed)
+
+    val doUnpack : 'a unpacker -> S.instream -> 'a * S.instream
+  
+    val fromFn : (S.instream -> 'a * S.instream) -> 'a unpacker
+
+    val || : 'a unpacker * 'a unpacker -> 'a unpacker
+    val >> : 'a unpacker * ('a -> 'b) -> 'b unpacker
+
+    val unpackArrayFold : 'a unpacker -> ('a * 'b -> 'b) -> 'b -> 'b unpacker
+    val unpackList   : 'a unpacker -> 'a list unpacker
+    val unpackVector : 'a unpacker -> 'a vector unpacker
+    val unpackArray  : 'a unpacker -> 'a array unpacker
+
+    val unpackPair : 'a unpacker * 'b unpacker -> ('a * 'b) unpacker
+    val unpackTuple3 : 'a unpacker * 'b unpacker * 'c unpacker -> ('a * 'b * 'c) unpacker
+    val unpackTuple4 : 'a unpacker * 'b unpacker * 'c unpacker * 'd unpacker -> ('a * 'b * 'c * 'd) unpacker
+    val unpackTuple5 : 'a unpacker * 'b unpacker * 'c unpacker * 'd unpacker * 'e unpacker -> ('a * 'b * 'c * 'd * 'e) unpacker
+    val unpackTuple6 : 'a unpacker * 'b unpacker * 'c unpacker * 'd unpacker * 'e unpacker * 'f unpacker -> ('a * 'b * 'c * 'd * 'e * 'f) unpacker
+
+    val unpackMapFold : ('a unpacker * 'b unpacker) -> ('a * 'b * 'c -> 'c) -> 'c -> 'c unpacker
+    val unpackPairList : ('a unpacker * 'b unpacker) -> ('a * 'b) list unpacker
+  
+    val unpackUnit : unit unpacker
+    val unpackBool : bool unpacker
+    val unpackInt : int unpacker
+    val unpackLargeInt : LargeInt.int unpacker
+    val unpackReal : real unpacker
+
+    val unpackString : string unpacker
+    val unpackBytesFromStr : Word8Vector.vector unpacker
+    val unpackBytes : Word8Vector.vector unpacker
+    val unpackExt : (int * Word8Vector.vector) unpacker
+    val unpackExtOfType : int -> Word8Vector.vector unpacker
+
+    val unpackOption : 'a unpacker -> 'a option unpacker
+  end
+end
+
+structure IntListIO = struct
+  type instream = int list
+  type outstream = int list ref
+  val input1 : instream -> (Word8.word * instream) option
+  val inputN : instream * int -> Word8Vector.vector * instream
+  val output : outstream * Word8Vector.vector -> unit
+  val output1 : outstream * Word8.word -> unit
+  val toList : outstream -> int list
+  val mkOutstream : unit -> outstream
+end
+
+structure MessagePackBinIO = struct
+  structure Pack = struct
+    type 'a packer (=boxed)
+
+    val doPack : 'a packer -> 'a -> BinIO.StreamIO.outstream -> unit
+
+    val fromFn : ('a -> BinIO.StreamIO.outstream -> unit) -> 'a packer
+
+    val packList   : 'a packer -> 'a list   packer
+    val packVector : 'a packer -> 'a vector packer
+    val packArray  : 'a packer -> 'a array  packer
+    val packArrayTabulate : 'a packer -> (int * (int -> 'a)) packer
+
+    val packPair   : 'a packer * 'b packer -> ('a * 'b) packer
+    val packTuple3 : 'a packer * 'b packer * 'c packer -> ('a * 'b * 'c) packer
+    val packTuple4 : 'a packer * 'b packer * 'c packer * 'd packer -> ('a * 'b * 'c * 'd) packer
+    val packTuple5 : 'a packer * 'b packer * 'c packer * 'd packer * 'e packer -> ('a * 'b * 'c * 'd * 'e) packer
+    val packTuple6 : 'a packer * 'b packer * 'c packer * 'd packer * 'e packer * 'f packer -> ('a * 'b * 'c * 'd * 'e * 'f) packer
+
+    val packUnit   : unit packer
+    val packBool   : bool packer
+    val packInt    : int packer
+    val packReal   : real packer
+    val packBytes  : Word8Vector.vector packer
+
+    val packExtOfType : int -> Word8Vector.vector packer
+
+    val packOption : 'a packer -> 'a option packer
+  end
+
+  structure Unpack = struct
+    type 'a unpacker (=boxed)
+
+    val doUnpack : 'a unpacker -> BinIO.StreamIO.instream -> 'a * BinIO.StreamIO.instream
+
+    val fromFn : (BinIO.StreamIO.instream -> 'a * BinIO.StreamIO.instream) -> 'a unpacker
+
+    val || : 'a unpacker * 'a unpacker -> 'a unpacker
+
+    val unpackArrayFold : 'a unpacker -> ('a * 'b -> 'b) -> 'b -> 'b unpacker
+    val unpackList   : 'a unpacker -> 'a list unpacker
+    val unpackVector : 'a unpacker -> 'a vector unpacker
+    val unpackArray  : 'a unpacker -> 'a array unpacker
+
+    val unpackPair : 'a unpacker * 'b unpacker -> ('a * 'b) unpacker
+    val unpackTuple3 : 'a unpacker * 'b unpacker * 'c unpacker -> ('a * 'b * 'c) unpacker
+    val unpackTuple4 : 'a unpacker * 'b unpacker * 'c unpacker * 'd unpacker -> ('a * 'b * 'c * 'd) unpacker
+    val unpackTuple5 : 'a unpacker * 'b unpacker * 'c unpacker * 'd unpacker * 'e unpacker -> ('a * 'b * 'c * 'd * 'e) unpacker
+    val unpackTuple6 : 'a unpacker * 'b unpacker * 'c unpacker * 'd unpacker * 'e unpacker * 'f unpacker -> ('a * 'b * 'c * 'd * 'e * 'f) unpacker
+
+    val unpackMapFold : ('a unpacker * 'b unpacker)-> ('a * 'b * 'c -> 'c) -> 'c -> 'c unpacker
+    val unpackPairList : ('a unpacker * 'b unpacker)-> ('a * 'b) list unpacker
+
+    val unpackUnit : unit unpacker
+    val unpackBool : bool unpacker
+    val unpackInt : int unpacker
+    val unpackLargeInt : LargeInt.int unpacker
+    val unpackReal : real unpacker
+    val unpackBytes : Word8Vector.vector unpacker
+    val unpackExt : (int * Word8Vector.vector) unpacker
+    val unpackExtOfType : int -> Word8Vector.vector unpacker
+
+    val unpackOption : 'a unpacker -> 'a option unpacker
+  end
+end
+
+structure MessagePackIntListIO = struct
+  structure Pack = struct
+    type 'a packer (=boxed)
+
+    val doPack : 'a packer -> 'a -> IntListIO.outstream -> unit
+
+    val fromFn : ('a -> IntListIO.outstream -> unit) -> 'a packer
+
+    val packList   : 'a packer -> 'a list   packer
+    val packVector : 'a packer -> 'a vector packer
+    val packArray  : 'a packer -> 'a array  packer
+    val packArrayTabulate : 'a packer -> (int * (int -> 'a)) packer 
+
+    val packPair   : 'a packer * 'b packer -> ('a * 'b) packer
+    val packTuple3 : 'a packer * 'b packer * 'c packer -> ('a * 'b * 'c) packer
+    val packTuple4 : 'a packer * 'b packer * 'c packer * 'd packer -> ('a * 'b * 'c * 'd) packer
+    val packTuple5 : 'a packer * 'b packer * 'c packer * 'd packer * 'e packer -> ('a * 'b * 'c * 'd * 'e) packer
+    val packTuple6 : 'a packer * 'b packer * 'c packer * 'd packer * 'e packer * 'f packer -> ('a * 'b * 'c * 'd * 'e * 'f) packer
+
+    val packUnit   : unit packer
+    val packBool   : bool packer
+    val packInt    : int packer
+    val packReal   : real packer
+    val packBytes  : Word8Vector.vector packer
+
+    val packExtOfType : int -> Word8Vector.vector packer
+
+    val packOption : 'a packer -> 'a option packer
+  end
+
+  structure Unpack = struct
+    type 'a unpacker (=boxed)
+
+    val doUnpack : 'a unpacker -> IntListIO.instream -> 'a * IntListIO.instream
+  
+    val fromFn : (IntListIO.instream -> 'a * IntListIO.instream) -> 'a unpacker
+
+    val || : 'a unpacker * 'a unpacker -> 'a unpacker
+
+    val unpackArrayFold : 'a unpacker -> ('a * 'b -> 'b) -> 'b -> 'b unpacker
+    val unpackList   : 'a unpacker -> 'a list unpacker
+    val unpackVector : 'a unpacker -> 'a vector unpacker
+    val unpackArray  : 'a unpacker -> 'a array unpacker
+
+    val unpackPair : 'a unpacker * 'b unpacker -> ('a * 'b) unpacker
+    val unpackTuple3 : 'a unpacker * 'b unpacker * 'c unpacker -> ('a * 'b * 'c) unpacker
+    val unpackTuple4 : 'a unpacker * 'b unpacker * 'c unpacker * 'd unpacker -> ('a * 'b * 'c * 'd) unpacker
+    val unpackTuple5 : 'a unpacker * 'b unpacker * 'c unpacker * 'd unpacker * 'e unpacker -> ('a * 'b * 'c * 'd * 'e) unpacker
+    val unpackTuple6 : 'a unpacker * 'b unpacker * 'c unpacker * 'd unpacker * 'e unpacker * 'f unpacker -> ('a * 'b * 'c * 'd * 'e * 'f) unpacker
+
+    val unpackMapFold : ('a unpacker * 'b unpacker)-> ('a * 'b * 'c -> 'c) -> 'c -> 'c unpacker
+    val unpackPairList : ('a unpacker * 'b unpacker)-> ('a * 'b) list unpacker
+  
+    val unpackUnit : unit unpacker
+    val unpackBool : bool unpacker
+    val unpackInt : int unpacker
+    val unpackLargeInt : LargeInt.int unpacker
+    val unpackReal : real unpacker
+    val unpackBytes : Word8Vector.vector unpacker
+    val unpackExt : (int * Word8Vector.vector) unpacker
+    val unpackExtOfType : int -> Word8Vector.vector unpacker
+
+    val unpackOption : 'a unpacker -> 'a option unpacker
+  end
+end

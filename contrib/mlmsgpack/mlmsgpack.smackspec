@@ -1,0 +1,5 @@
+provides: mlmsgpack v0.1.0
+remote: git git://github.com/tkob/mlmsgpack.git
+description: ML-MessagePack, MessagePack implementation for Standard ML
+bug-url: https://github.com/tkob/mlmsgpack/issues
+license: MIT License
