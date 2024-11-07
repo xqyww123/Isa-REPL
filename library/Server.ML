@@ -1,6 +1,6 @@
 signature REPL_SEVER = sig
 
-val startup : string (*listening address:port*) -> unit
+val startup : theory option -> string (*listening address:port*) -> unit
 
 end
 
@@ -59,7 +59,7 @@ fun make_streams socket =
 
   in (in_stream, out_stream) end
 
-fun startup addr0 =
+fun startup thy addr0 =
   let val socket: Socket.passive INetSock.stream_sock = INetSock.TCP.socket ()
       val _ = Socket.Ctl.setREUSEADDR (socket, true)
 
@@ -84,7 +84,8 @@ fun startup addr0 =
                                           (MessagePackBinIO.Unpack.unpackString) cin
                 val ret = REPL.RE source
                 val _ = MessagePackBinIO.Pack.doPack REPL_Serialize.command_outputs_packer ret cout
-             in loop cin'
+             in REPL.init_repler thy
+              ; loop cin'
             end
        in Isabelle_Thread.fork {name="REPL-worker", stack_limit=NONE, interrupts=true}
                                (fn () => loop cin)

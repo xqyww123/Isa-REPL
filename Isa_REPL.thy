@@ -1,4 +1,4 @@
-theory "Isa_REPL"
+theory Isa_REPL
   imports Main
 begin
 
