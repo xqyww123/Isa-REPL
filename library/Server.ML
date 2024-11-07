@@ -84,11 +84,11 @@ fun startup thy addr0 =
                                           (MessagePackBinIO.Unpack.unpackString) cin
                 val ret = REPL.RE source
                 val _ = MessagePackBinIO.Pack.doPack REPL_Serialize.command_outputs_packer ret cout
-             in REPL.init_repler thy
-              ; loop cin'
+             in loop cin'
             end
        in Isabelle_Thread.fork {name="REPL-worker", stack_limit=NONE, interrupts=true}
-                               (fn () => loop cin)
+                               (fn () => ( REPL.init_repler thy
+                                         ; loop cin ))
       end
   end
 
