@@ -1,4 +1,7 @@
 signature REPL_SEVER = sig
+
+val startup : string (*listening address:port*) -> unit
+
 end
 
 structure REPL_Server : REPL_SEVER = struct
@@ -56,7 +59,7 @@ fun make_streams socket =
 
   in (in_stream, out_stream) end
 
-fun startup addr =
+fun startup addr0 =
   let val socket: Socket.passive INetSock.stream_sock = INetSock.TCP.socket ()
       val _ = Socket.Ctl.setREUSEADDR (socket, true)
 
@@ -69,10 +72,11 @@ fun startup addr =
                      | _ => err ());
           in INetSock.toAddr (NetHostDB.addr host, port)
          end
-      val addr = parse_addr addr
+      val addr = parse_addr addr0
       val _ = Socket.bind (socket, addr)
       val _ = Socket.listen (socket, 16)
-   in while true do
+   in writeln ("Starting listening to " ^ addr0 ^ "... and I will never terminate untill you kill me!")
+    ; while true do
       let val (conn,sender) = Socket.accept socket
           val (cin, cout) = make_streams conn
           fun loop cin =
