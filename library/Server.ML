@@ -59,6 +59,8 @@ fun make_streams socket =
 
   in (in_stream, out_stream) end
 
+val _ = Multithreading.parallel_proofs := 0
+
 fun startup thy addr0 =
   let val socket: Socket.passive INetSock.stream_sock = INetSock.TCP.socket ()
       val _ = Socket.Ctl.setREUSEADDR (socket, true)
@@ -75,15 +77,21 @@ fun startup thy addr0 =
       val addr = parse_addr addr0
       val _ = Socket.bind (socket, addr)
       val _ = Socket.listen (socket, 16)
-   in writeln ("Starting listening to " ^ addr0 ^ "... and I will never terminate untill you kill me!")
+      val msg = "Hi, this is Isabelle REPL Server.\n\
+        \I'm now listening on " ^ addr0 ^ ". I will never terminate untill you kill me!"
+   in writeln msg
     ; while true do
       let val (conn,sender) = Socket.accept socket
           val (cin, cout) = make_streams conn
           fun loop cin =
-            let val (source, cin') = MessagePackBinIO.Unpack.doUnpack
+            if BinIO.StreamIO.endOfStream cin
+            then ()
+            else let
+                val (source, cin') = MessagePackBinIO.Unpack.doUnpack
                                           (MessagePackBinIO.Unpack.unpackString) cin
                 val ret = REPL.RE source
                 val _ = MessagePackBinIO.Pack.doPack REPL_Serialize.command_outputs_packer ret cout
+                val _ = BinIO.StreamIO.flushOut cout
              in loop cin'
             end
        in Isabelle_Thread.fork {name="REPL-worker", stack_limit=NONE, interrupts=true}

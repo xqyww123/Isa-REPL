@@ -13,9 +13,9 @@ open REPL
 
 local open MessagePackBinIO.Pack in
 
-fun flags_packer {is_toplevel, is_theory, is_proof, is_skipped_proof, is_end_theory}
-      = packTuple5 (packBool, packBool, packBool, packBool, packBool)
-                   (is_toplevel, is_theory, is_proof, is_skipped_proof, is_end_theory)
+fun flags_packer {is_toplevel, is_theory, is_proof, is_skipped_proof}
+      = packTuple4 (packBool, packBool, packBool, packBool)
+                   (is_toplevel, is_theory, is_proof, is_skipped_proof)
 
 fun message_type_packer NORMAL  = packInt 0
   | message_type_packer TRACING = packInt 1
@@ -25,19 +25,22 @@ val message_packer = packPair (message_type_packer, packString)
 
 
 fun command_output_packer {
+        command_name : string,
         message: message list, (*text printed in Isabelle's output panel*)
         output : Latex.text option, (*text, section, and other latex commands*)
         flags  : flags,
         level  : int,
         state  : string,
         errors : string list
-} = packTuple6 (packList message_packer,
+} = packTuple7 (packString,
+                packList message_packer,
                 packOption (packString o YXML.string_of_body),
                 flags_packer,
                 packInt,
                 packString,
                 packList packString)
-    (   message: message list, (*text printed in Isabelle's output panel*)
+    (   command_name,
+        message: message list, (*text printed in Isabelle's output panel*)
         output : Latex.text option, (*text, section, and other latex commands*)
         flags  : flags,
         level  : int,

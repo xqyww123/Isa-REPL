@@ -23,6 +23,8 @@ functor MessagePack(S : sig
     val packTuple4 : 'a packer * 'b packer * 'c packer * 'd packer -> ('a * 'b * 'c * 'd) packer
     val packTuple5 : 'a packer * 'b packer * 'c packer * 'd packer * 'e packer -> ('a * 'b * 'c * 'd * 'e) packer
     val packTuple6 : 'a packer * 'b packer * 'c packer * 'd packer * 'e packer * 'f packer -> ('a * 'b * 'c * 'd * 'e * 'f) packer
+    val packTuple7 : 'a packer * 'b packer * 'c packer * 'd packer * 'e packer * 'f packer * 'g packer
+                      -> ('a * 'b * 'c * 'd * 'e * 'f * 'g) packer
 
     val packPairList : ('a packer * 'b packer) -> ('a * 'b) list packer
     val packMapTabulate : ('a packer * 'b packer) -> (int * (int -> 'a * 'b)) packer
@@ -160,6 +162,9 @@ end = struct
       fun packTuple6 (p1, p2, p3, p4, p5, p6) (v1, v2, v3, v4, v5, v6) outs =
         (outputArrayLength 6 outs;
         p1 v1 outs; p2 v2 outs; p3 v3 outs; p4 v4 outs; p5 v5 outs; p6 v6 outs)
+      fun packTuple7 (p1, p2, p3, p4, p5, p6, p7) (v1, v2, v3, v4, v5, v6, v7) outs =
+        (outputArrayLength 7 outs;
+        p1 v1 outs; p2 v2 outs; p3 v3 outs; p4 v4 outs; p5 v5 outs; p6 v6 outs; p7 v7 outs)
 
       fun packPairList (p1, p2) values outs =
         (outputMapLength (List.length values) outs;

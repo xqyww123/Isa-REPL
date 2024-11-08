@@ -15,3 +15,5 @@ Phi_System/Overleaf-CoP-paper
 src/__pycache__/
 test_1/log
 test_1/test_1_Proof_Server.thy
+
+__pycache__
