@@ -32,9 +32,7 @@ section \<open>The datatype of finite lists\<close>
 theory List
 imports Sledgehammer Lifting_Set
 begin
-           """
-)
-echo_eval ("""
+
 datatype (set: 'a) list =
     Nil  ("[]")
   | Cons (hd: 'a) (tl: "'a list")  (infixr "#" 65)
@@ -49,6 +47,33 @@ where
 lemma
   "(1::int) + 2 = 3"
   by smt
+
+definition "ONE = (1::nat)"
+end
+
+theory HHH
+  imports List
+begin
+lemma "ONE + ONE = 2"
+    unfolding ONE_def
+    by auto
+end
+
+theory GGG
+  imports HHH
+begin
+lemma "ONE + ONE = 2"
+    unfolding ONE_def
+    by auto
+end
+
+theory KKK
+  imports HHH
+begin
+lemma "ONE + ONE = 2"
+    unfolding ONE_def
+    by auto
+end
 """)
 
 #echo_eval ("""theory AA

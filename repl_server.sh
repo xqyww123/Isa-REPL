@@ -18,5 +18,7 @@ echo "theory REPL$$ imports \"Isa_REPL.Isa_REPL\" begin ML \\<open>Isabelle_Thre
 echo "session REPL$$ = \"$(printf '%b' $2)\" + sessions Isa_REPL theories REPL$$" > $DIR/ROOT
 isabelle build -D $DIR REPL$$
 
+rm $DIR -r
+
 #isabelle process -l $2 -f $base/contrib/mlmsgpack/mlmsgpack-aux.sml -f $base/contrib/mlmsgpack/realprinter-packreal.sml -f $base/contrib/mlmsgpack/mlmsgpack.sml -f $base/library/REPL.ML -f $base/library/REPL_serializer.ML -f $base/library/Server.ML -e "REPL_Server.startup ${(qqq)3} NONE ${(qqq)1}"
 

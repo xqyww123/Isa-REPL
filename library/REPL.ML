@@ -107,6 +107,8 @@ fun init_printers () =
 
 val _ = init_printers ()
 
+val _ = Multithreading.parallel_proofs := 0 (*TODO: disable me!*)
+
 (** RE **)
 
 type counter = int
@@ -119,18 +121,16 @@ val evaluated_theories = Thread_Data.var () : theory Symtab.table Thread_Data.va
 
 exception REPL_fail of string
 
-fun parse_thy {base_dir, thy_qualifier} wid pos source =
-  let val toks = Symbol_Pos.explode (source, pos)
-              |> Token.tokenize pure_keywords {strict = false}
-      val i = find_index (fn tok =>
-                Token.is_kind Token.Command tok andalso
-                Token.content_of tok = "theory"
-              ) toks
+fun is_theory_tok tok = Token.is_kind Token.Command tok andalso Token.content_of tok = "theory"
+
+fun parse_thy {base_dir, thy_qualifier} wid source =
+  let val toks = Token.tokenize pure_keywords {strict = false} source
+      val i = find_index is_theory_tok toks
    in if i = ~1
    then Pure
    else let
       val header_toks = List.drop (toks, i)
-      val header = Thy_Header.read_tokens pos header_toks
+      val header = Thy_Header.read_tokens (Token.pos_of (hd header_toks)) header_toks
 
       fun qualify_name {name,imports,keywords} =
             {name=apfst (Long_Name.qualify ("REPL" ^ string_of_int wid)) name, imports=imports, keywords=keywords}
@@ -140,15 +140,15 @@ fun parse_thy {base_dir, thy_qualifier} wid pos source =
       val imports = #imports header
       val evaluated_theories = the_default Symtab.empty (Thread_Data.get evaluated_theories)
       fun parse import =
-             case Symtab.lookup evaluated_theories import
-               of SOME thy => thy
-                | NONE     => (
-             case Thy_Info.lookup_theory import
-               of SOME thy => thy
-                | NONE     => (
-             if Long_Name.qualifier import = ""
-             then parse (Long_Name.qualify thy_qualifier import)
-             else raise REPL_fail ("Bad theory import " ^ import)
+            case Symtab.lookup evaluated_theories import
+              of SOME thy => thy
+               | NONE     => (
+            case Thy_Info.lookup_theory import
+              of SOME thy => thy
+               | NONE     => (
+             if Long_Name.is_qualified import
+             then raise REPL_fail ("Bad theory import " ^ import)
+             else parse (Long_Name.qualify thy_qualifier import)
             ))
       val parents =
             imports |> map (fn (import, _ (*pos*)) => parse import)
@@ -159,14 +159,34 @@ fun parse_thy {base_dir, thy_qualifier} wid pos source =
   end
   end
 
-fun parse_text cfg wid state pos source =
+(* fun split_commands src *)
+
+fun parse_text' thy init text =
+     Token.tokenize (Thy_Header.get_keywords thy) {strict = false} text
+  |> Outer_Syntax.parse_spans
+  |> map (Command_Span.content #> Outer_Syntax.parse_span thy init);
+
+fun split_thy_headers source =
+  let val toks = Token.tokenize pure_keywords {strict = false} source
+      fun split (_,ret,src) [] = rev (src::ret)
+        | split (m,ret,src) (x :: xs) =
+            if is_theory_tok x
+            then let val m' = the (Position.offset_of (Token.pos_of x)) - 1
+                     val n = m' - m
+                  in split (m', take n src::ret, drop n src) xs
+                 end
+            else split (m,ret, src) xs
+   in split (0,[],source) toks
+  end
+
+fun parse_text cfg wid state source =
   let val _ = if can Toplevel.theory_of state <> Toplevel.is_toplevel state then ()
               else error "BUG: K/aPbPakSCOMOSqoevPh+g"
       val thy =
         case try Toplevel.theory_of state
           of SOME thy => thy
-           | NONE => parse_thy cfg wid pos source
-   in Outer_Syntax.parse_text thy (K thy) pos source
+           | NONE => parse_thy cfg wid source
+   in parse_text' thy (K thy) source
    |> filter_out Toplevel.is_ignored
   end
 
@@ -178,10 +198,9 @@ fun RE cfg source : command_outputs =
     of NONE          => {outputs=[], error=SOME "INTERNAL ERROR: worker ID lost"}
      | SOME wid =>
   let val pos = Position.make {
-                  line=0, offset=0, end_offset=0, props={label="", file="#REPL", id=string_of_int cnt}}
-      val trs = parse_text cfg wid s0 pos source
-(*Outer_Syntax.parse_text thy (K thy) pos source
-             |> filter_out Toplevel.is_ignored*)
+                  line=1, offset=1, end_offset=1, props={label="", file="#REPL", id=string_of_int cnt}}
+      val srcs = Symbol_Pos.explode (source, pos)
+              |> split_thy_headers
 
       val trim_err = map (trim_makrup o #2 o #1)
       fun catch_state err tr s : command_output = {
@@ -215,17 +234,27 @@ fun RE cfg source : command_outputs =
           }
 
       fun mk_command_outputs a b = {outputs=rev a, error=b} : command_outputs
-      
-      fun loop ret [] s = (mk_command_outputs ret NONE, s)
-        | loop ret (tr::trs) s =
+            
+      fun loop ret [] [] s = (mk_command_outputs ret NONE, s)
+        | loop ret [] (src::srcs) s = loop ret (parse_text cfg wid s src) srcs s
+        | loop ret (tr::trs) srcs s =
             case Toplevel.command_errors true tr s
               of (err, NONE)    =>
                     (mk_command_outputs (err_state err tr s::ret)
-                                        (SOME "INTERNAL ERROR: state lost"), s0)
+                                        (SOME "Some error happens"), s0)
                | (err, SOME s') =>
-                    loop ((catch_state err tr s')::ret) trs s'
+                let val _ = if Toplevel.is_end_theory s'
+                            then let
+                              val thys = the_default Symtab.empty (Thread_Data.get evaluated_theories)
+                              val thy  = Toplevel.end_theory pos s'
+                              val thys'= Symtab.update_new (Context.theory_name {long=false} thy, thy) thys
+                              in Thread_Data.put evaluated_theories (SOME thys')
+                             end
+                            else ()
+                 in loop ((catch_state err tr s')::ret) trs srcs s'
+                end
 
-      val (ret, s') = loop [] trs s0
+      val (ret, s') = loop [] [] srcs s0
 
    in Thread_Data.put state (SOME (s', cnt+1))
     ; ret

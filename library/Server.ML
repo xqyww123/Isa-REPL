@@ -66,18 +66,10 @@ fun make_streams socket =
 
 val session_ID_counter = Counter.make ()
 
-val _ = Multithreading.parallel_proofs := 0
-
 val servers = Synchronized.var "REPL Servers" (Symtab.empty : Thread.thread Symtab.table)
 
 fun startup base_dir_of_theories thy addr0 =
-  let (* val _ = if is_some (Future.worker_task ())
-              then error "The REPL server cannot be initiated on an Isabelle concurrent worker thread.\n\
-                         \You may call \<open>REPL_Server.startup_in_a_new_thread\<close> to start up the server \
-                         \from a fresh thread.\<close>"
-              else () *)
-
-      val _ = if File.is_dir base_dir_of_theories
+  let val _ = if File.is_dir base_dir_of_theories
               then warning ("The base_dir_of_theories already exists. The shell may overwrite files.")
               else if File.exists base_dir_of_theories
               then error ("The base_dir_of_theories must be a directory : " ^ File.standard_path base_dir_of_theories)
@@ -103,8 +95,8 @@ fun startup base_dir_of_theories thy addr0 =
    in writeln msg
     ; Output.physical_stdout msg
     ; Output.physical_stderr msg
-    ; Isabelle_Thread.fork {name="REPL server " ^ addr0, stack_limit=NONE, interrupts=true} (fn () => (
-      Synchronized.change servers (Symtab.update_new (addr0, Thread.self ()))
+    (*  ; Isabelle_Thread.fork {name="REPL server " ^ addr0, stack_limit=NONE, interrupts=true} (fn () => (
+      Synchronized.change servers (Symtab.update_new (addr0, Thread.self ())) *)
     ; while true do
       let val (conn,sender) = Socket.accept socket
           val (cin, cout) = make_streams conn
@@ -133,10 +125,11 @@ fun startup base_dir_of_theories thy addr0 =
        in (* Isabelle_Thread.fork {name="REPL-worker", stack_limit=NONE, interrupts=true}
                                (fn () => ( *) REPL.init_repler wid thy
                                          ; loop cin (* )) *)
-      end
-      handle E => (
+      end ;
+Thread.self ()
+      (* handle E => (
         Synchronized.change servers (Symtab.delete addr0) ;
-        Exn.reraise E) ))
+        Exn.reraise E) )) *)
   end
 
 fun kill_server address =
