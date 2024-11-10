@@ -47,17 +47,18 @@ fun command_output_packer {
         state  : string,
         errors : string list    )
 
+
 type command_outputs = {
         outputs: command_output list,
         error : string option
 }
 
 fun command_outputs_packer {
-        outputs: command_output list,
+        outputs: command_output list option,
         error : string option
-} = packPair (packList command_output_packer,
+} = packPair (packOption (packList command_output_packer),
               packOption packString)
-    (   outputs: command_output list,
+    (   outputs: command_output list option,
         error : string option     )
 
 

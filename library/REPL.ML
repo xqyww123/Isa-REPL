@@ -18,13 +18,14 @@ type command_output = {
         errors : string list
 }
 type command_outputs = {
-        outputs: command_output list,
+        outputs: command_output list option,
         error : string option
 }
 
 type Session_ID = int
 val init_repler : Session_ID -> theory option -> unit
 val RE : {base_dir: Path.T, thy_qualifier: string} -> string -> command_outputs
+val set_trace : bool -> unit
 
 val the_current_worker_ID  : unit -> Session_ID option
 val get_and_clean_message' : Session_ID -> message list
@@ -66,7 +67,7 @@ type command_output = {
         errors  : string list
 }
 type command_outputs = {
-        outputs: command_output list,
+        outputs: command_output list option,
         error : string option
 }
 
@@ -112,7 +113,8 @@ val _ = Multithreading.parallel_proofs := 0 (*TODO: disable me!*)
 (** RE **)
 
 type counter = int
-val state = Thread_Data.var () : (Toplevel.state * counter) Thread_Data.var
+type trace = bool
+val state = Thread_Data.var () : (Toplevel.state * counter * trace) Thread_Data.var
 
 val Pure = Theory.get_pure ()
 val pure_keywords = Thy_Header.get_keywords Pure
@@ -190,12 +192,17 @@ fun parse_text cfg wid state source =
    |> filter_out Toplevel.is_ignored
   end
 
+fun set_trace v =
+  case Thread_Data.get state
+    of NONE => raise REPL_fail "INTERNAL ERROR: state lost"
+     | SOME (s,c,_) => Thread_Data.put state (SOME (s, c, v))
+
 fun RE cfg source : command_outputs =
   case Thread_Data.get state
-    of NONE          => {outputs=[], error=SOME "INTERNAL ERROR: state lost"}
-     | SOME (s0,cnt) =>
+    of NONE          => {outputs=NONE, error=SOME "INTERNAL ERROR: state lost"}
+     | SOME (s0,cnt,trace) =>
   case Thread_Data.get Session_ID
-    of NONE          => {outputs=[], error=SOME "INTERNAL ERROR: worker ID lost"}
+    of NONE          => {outputs=NONE, error=SOME "INTERNAL ERROR: worker ID lost"}
      | SOME wid =>
   let val pos = Position.make {
                   line=1, offset=1, end_offset=1, props={label="", file="#REPL", id=string_of_int cnt}}
@@ -214,7 +221,7 @@ fun RE cfg source : command_outputs =
                     is_skipped_proof = Toplevel.is_skipped_proof s
                 },
               level   = Toplevel.level s,
-              state   = "" (*trim_makrup (Toplevel.string_of_state s)*),
+              state   = trim_makrup (Toplevel.string_of_state s),
               errors  = trim_err err
           }
 
@@ -233,14 +240,14 @@ fun RE cfg source : command_outputs =
               errors  = trim_err err
           }
 
-      fun mk_command_outputs a b = {outputs=rev a, error=b} : command_outputs
+      fun mk_command_outputs a b = {outputs = if trace then SOME (rev a) else NONE, error=b} : command_outputs
             
       fun loop ret [] [] s = (mk_command_outputs ret NONE, s)
         | loop ret [] (src::srcs) s = loop ret (parse_text cfg wid s src) srcs s
         | loop ret (tr::trs) srcs s =
             case Toplevel.command_errors true tr s
               of (err, NONE)    =>
-                    (mk_command_outputs (err_state err tr s::ret)
+                    (mk_command_outputs (if trace then err_state err tr s::ret else [])
                                         (SOME "Some error happens"), s0)
                | (err, SOME s') =>
                 let val _ = if Toplevel.is_end_theory s'
@@ -251,21 +258,21 @@ fun RE cfg source : command_outputs =
                               in Thread_Data.put evaluated_theories (SOME thys')
                              end
                             else ()
-                 in loop ((catch_state err tr s')::ret) trs srcs s'
+                 in loop (if trace then (catch_state err tr s')::ret else []) trs srcs s'
                 end
 
       val (ret, s') = loop [] [] srcs s0
 
-   in Thread_Data.put state (SOME (s', cnt+1))
+   in Thread_Data.put state (SOME (s', cnt+1, trace))
     ; ret
   end
-  handle REPL_fail E => {outputs=[], error=SOME E}
+  handle REPL_fail E => {outputs = NONE, error=SOME E}
 
 fun init_repler id thy =
   let 
    in Thread_Data.put Session_ID (SOME id)
     ; Synchronized.change message_buffer (Inttab.update_new (id, []))
-    ; Thread_Data.put state (SOME (Toplevel.make_state thy, 0))
+    ; Thread_Data.put state (SOME (Toplevel.make_state thy, 0, true))
   end
 
 end

@@ -52,7 +52,16 @@ class Client:
         ret = self.unpack.unpack()
         return ret
 
-
+    def set_trace (self, enable):
+        """
+        By default, Isabelle REPL will collect all the output of every command.
+        It causes the evaluation very slow.
+        You can set the trace to false to disable the collection of the outputs,
+        which speeds up the REPL a lot.
+        """
+        mp.pack ("\x05trace" if enable else "\x05notrace", self.cout)
+        self.cout.flush()
+        self.unpack.unpack()
 
     def boring_parse(data):
         """
@@ -60,8 +69,9 @@ class Client:
         This conversion just intends to explain the meaning of each data field,
         and convert the data into an easy-to-understand form.
         """
-        return {
-        'outputs': [{
+        if data[0] is None:
+            outputs = None
+        else: outputs = [{
             'command_name': output[0],
             'message': [{
                 'type': msg[0],
@@ -79,9 +89,10 @@ class Client:
             'level': output[4],
             'state': output[5],     # the proof state as a string
             'errors': output[6]     # any errors raised during evaluating this single command.
-            } for output in data[0]],
-            # every output corresponds to one command
-         'error': data[1]
+            } for output in data[0]]
+        return {
+        'outputs': outputs, # every output corresponds to one command
+        'error': data[1]
         }
 
     def silly_eval(self, source):

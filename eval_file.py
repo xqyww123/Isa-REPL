@@ -15,6 +15,7 @@ addr   = sys.argv[1]
 target = sys.argv[2]
 
 c = Client(addr)
+c.set_trace (False)
 
 def is_empty(obj):
     return obj == [] or obj == ""
@@ -22,12 +23,7 @@ def is_empty(obj):
 with open(target, "r") as file:
     content = file.read()
     ret = c.eval(content)
-    for out in ret[0]:
-        print(out)
-        if not is_empty(out[6]):
-            print(out[6])
-            exit(1)
-    if not is_empty(ret[1]):
+    if not is_empty(ret[1]) and not ret[1] is None:
         print(ret[1])
         exit(1)
 

@@ -32,7 +32,11 @@ section \<open>The datatype of finite lists\<close>
 theory List
 imports Sledgehammer Lifting_Set
 begin
+""")
 
+c.set_trace(False)
+
+echo_eval("""
 datatype (set: 'a) list =
     Nil  ("[]")
   | Cons (hd: 'a) (tl: "'a list")  (infixr "#" 65)

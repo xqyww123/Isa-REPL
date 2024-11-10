@@ -95,8 +95,8 @@ fun startup base_dir_of_theories thy addr0 =
    in writeln msg
     ; Output.physical_stdout msg
     ; Output.physical_stderr msg
-    (*  ; Isabelle_Thread.fork {name="REPL server " ^ addr0, stack_limit=NONE, interrupts=true} (fn () => (
-      Synchronized.change servers (Symtab.update_new (addr0, Thread.self ())) *)
+    ; Isabelle_Thread.fork {name="REPL server " ^ addr0, stack_limit=NONE, interrupts=true} (fn () => (
+      Synchronized.change servers (Symtab.update_new (addr0, Thread.self ()))
     ; while true do
       let val (conn,sender) = Socket.accept socket
           val (cin, cout) = make_streams conn
@@ -117,19 +117,30 @@ fun startup base_dir_of_theories thy addr0 =
             else let
                 val (source, cin') = MessagePackBinIO.Unpack.doUnpack
                                           (MessagePackBinIO.Unpack.unpackString) cin
-                val ret = REPL.RE {base_dir=base_dir, thy_qualifier=thy_qualifier} source
-                val _ = MessagePackBinIO.Pack.doPack REPL_Serialize.command_outputs_packer ret cout
+                val _ = let open MessagePackBinIO.Pack in
+                  if String.isPrefix "\005" source
+                  then case source
+                    of "\005trace" => (
+                          REPL.set_trace true;
+                          doPack packBool true cout)
+                     | "\005notrace" => (
+                          REPL.set_trace false;
+                          doPack packBool true cout)
+                  else let
+                    val ret = REPL.RE {base_dir=base_dir, thy_qualifier=thy_qualifier} source
+                     in doPack REPL_Serialize.command_outputs_packer ret cout
+                    end
+                  end
                 val _ = BinIO.StreamIO.flushOut cout
              in loop cin'
             end
-       in (* Isabelle_Thread.fork {name="REPL-worker", stack_limit=NONE, interrupts=true}
-                               (fn () => ( *) REPL.init_repler wid thy
-                                         ; loop cin (* )) *)
-      end ;
-Thread.self ()
-      (* handle E => (
+       in Isabelle_Thread.fork {name="REPL-worker", stack_limit=NONE, interrupts=true}
+                               (fn () => ( REPL.init_repler wid thy
+                                         ; loop cin ))
+      end
+        handle E => (
         Synchronized.change servers (Symtab.delete addr0) ;
-        Exn.reraise E) )) *)
+        Exn.reraise E) ))
   end
 
 fun kill_server address =
