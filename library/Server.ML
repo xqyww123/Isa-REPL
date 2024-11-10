@@ -1,10 +1,15 @@
 signature REPL_SEVER = sig
 
-val startup : theory option -> string (*listening address:port*) -> unit
+type address = string (*IP address:port*)
+
+val startup : Path.T -> theory option -> address -> Thread.thread
+val kill_server : address -> unit
 
 end
 
 structure REPL_Server : REPL_SEVER = struct
+
+type address = string (*IP address:port*)
 
 fun close_permissive socket =
   Socket.close socket handle OS.SysErr _ => ();
@@ -59,10 +64,26 @@ fun make_streams socket =
 
   in (in_stream, out_stream) end
 
+val session_ID_counter = Counter.make ()
+
 val _ = Multithreading.parallel_proofs := 0
 
-fun startup thy addr0 =
-  let val socket: Socket.passive INetSock.stream_sock = INetSock.TCP.socket ()
+val servers = Synchronized.var "REPL Servers" (Symtab.empty : Thread.thread Symtab.table)
+
+fun startup base_dir_of_theories thy addr0 =
+  let (* val _ = if is_some (Future.worker_task ())
+              then error "The REPL server cannot be initiated on an Isabelle concurrent worker thread.\n\
+                         \You may call \<open>REPL_Server.startup_in_a_new_thread\<close> to start up the server \
+                         \from a fresh thread.\<close>"
+              else () *)
+
+      val _ = if File.is_dir base_dir_of_theories
+              then warning ("The base_dir_of_theories already exists. The shell may overwrite files.")
+              else if File.exists base_dir_of_theories
+              then error ("The base_dir_of_theories must be a directory : " ^ File.standard_path base_dir_of_theories)
+              else OS.FileSys.mkDir (File.standard_path base_dir_of_theories)
+
+      val socket: Socket.passive INetSock.stream_sock = INetSock.TCP.socket ()
       val _ = Socket.Ctl.setREUSEADDR (socket, true)
 
       fun parse_addr socket_name =
@@ -80,24 +101,47 @@ fun startup thy addr0 =
       val msg = "Hi, this is Isabelle REPL Server.\n\
         \I'm now listening on " ^ addr0 ^ ". I will never terminate untill you kill me!"
    in writeln msg
+    ; Output.physical_stdout msg
+    ; Output.physical_stderr msg
+    ; Isabelle_Thread.fork {name="REPL server " ^ addr0, stack_limit=NONE, interrupts=true} (fn () => (
+      Synchronized.change servers (Symtab.update_new (addr0, Thread.self ()))
     ; while true do
       let val (conn,sender) = Socket.accept socket
           val (cin, cout) = make_streams conn
+
+          val wid = session_ID_counter ()
+          val base_dir = Path.append base_dir_of_theories (Path.basic (string_of_int wid))
+          val _ = if File.is_dir base_dir
+                  then ()
+                  else ( if File.exists base_dir then File.rm base_dir else ();
+                         OS.FileSys.mkDir (File.platform_path base_dir) )
+
+          val (thy_qualifier, cin) = MessagePackBinIO.Unpack.doUnpack
+                                          (MessagePackBinIO.Unpack.unpackString) cin
+
           fun loop cin =
             if BinIO.StreamIO.endOfStream cin
             then ()
             else let
                 val (source, cin') = MessagePackBinIO.Unpack.doUnpack
                                           (MessagePackBinIO.Unpack.unpackString) cin
-                val ret = REPL.RE source
+                val ret = REPL.RE {base_dir=base_dir, thy_qualifier=thy_qualifier} source
                 val _ = MessagePackBinIO.Pack.doPack REPL_Serialize.command_outputs_packer ret cout
                 val _ = BinIO.StreamIO.flushOut cout
              in loop cin'
             end
-       in Isabelle_Thread.fork {name="REPL-worker", stack_limit=NONE, interrupts=true}
-                               (fn () => ( REPL.init_repler thy
-                                         ; loop cin ))
+       in (* Isabelle_Thread.fork {name="REPL-worker", stack_limit=NONE, interrupts=true}
+                               (fn () => ( *) REPL.init_repler wid thy
+                                         ; loop cin (* )) *)
       end
+      handle E => (
+        Synchronized.change servers (Symtab.delete addr0) ;
+        Exn.reraise E) ))
   end
+
+fun kill_server address =
+  case Symtab.lookup (Synchronized.value servers) address
+    of SOME thr => Isabelle_Thread.interrupt_unsynchronized thr
+     | NONE => ()
 
 end

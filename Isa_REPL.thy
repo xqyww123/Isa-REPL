@@ -1,8 +1,6 @@
 theory Isa_REPL
-  imports Main
+  imports Pure
 begin
-
-declare [[ML_debugger]]
 
 ML_file \<open>contrib/mlmsgpack/mlmsgpack-aux.sml\<close>
 ML_file \<open>contrib/mlmsgpack/realprinter-packreal.sml\<close>

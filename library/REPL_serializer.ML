@@ -34,7 +34,7 @@ fun command_output_packer {
         errors : string list
 } = packTuple7 (packString,
                 packList message_packer,
-                packOption (packString o YXML.string_of_body),
+                packOption (packString o REPL.trim_makrup o YXML.string_of_body),
                 flags_packer,
                 packInt,
                 packString,

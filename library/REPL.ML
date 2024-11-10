@@ -22,13 +22,15 @@ type command_outputs = {
         error : string option
 }
 
-val init_repler : theory option -> unit
-val RE : string -> command_outputs
+type Session_ID = int
+val init_repler : Session_ID -> theory option -> unit
+val RE : {base_dir: Path.T, thy_qualifier: string} -> string -> command_outputs
 
-type Worker_ID = int
-val the_current_worker_ID  : unit -> Worker_ID option
-val get_and_clean_message' : Worker_ID -> message list
+val the_current_worker_ID  : unit -> Session_ID option
+val get_and_clean_message' : Session_ID -> message list
 val get_and_clean_message  : unit -> message list
+
+val trim_makrup : string -> string
 
 end
 
@@ -70,10 +72,10 @@ type command_outputs = {
 
 (** Worker ID **)
 
-type Worker_ID = int
-val Worker_ID = Thread_Data.var () : (Worker_ID * theory) Thread_Data.var;
+type Session_ID = int
+val Session_ID = Thread_Data.var () : Session_ID Thread_Data.var;
 
-fun the_current_worker_ID () = Option.map fst (Thread_Data.get Worker_ID)
+fun the_current_worker_ID () = Thread_Data.get Session_ID
 
 (** Message **)
 
@@ -87,14 +89,14 @@ fun get_and_clean_message' wid =
     end )
 
 fun get_and_clean_message () =
-  case Thread_Data.get Worker_ID
-    of SOME (id, _) => get_and_clean_message' id
+  case Thread_Data.get Session_ID
+    of SOME id => get_and_clean_message' id
      | NONE => []
 
 fun init_printers () =
   let fun output_fn typ fallback = (fn ms =>
-            case Thread_Data.get Worker_ID
-              of SOME (id, _) =>
+            case Thread_Data.get Session_ID
+              of SOME id =>
                     Synchronized.change message_buffer
                         (Inttab.map_entry id (fn L => (typ, trim_makrup (implode ms)) :: L))
                | NONE => fallback ms )
@@ -110,21 +112,78 @@ val _ = init_printers ()
 type counter = int
 val state = Thread_Data.var () : (Toplevel.state * counter) Thread_Data.var
 
-fun RE source : command_outputs =
+val Pure = Theory.get_pure ()
+val pure_keywords = Thy_Header.get_keywords Pure
+
+val evaluated_theories = Thread_Data.var () : theory Symtab.table Thread_Data.var
+
+exception REPL_fail of string
+
+fun parse_thy {base_dir, thy_qualifier} wid pos source =
+  let val toks = Symbol_Pos.explode (source, pos)
+              |> Token.tokenize pure_keywords {strict = false}
+      val i = find_index (fn tok =>
+                Token.is_kind Token.Command tok andalso
+                Token.content_of tok = "theory"
+              ) toks
+   in if i = ~1
+   then Pure
+   else let
+      val header_toks = List.drop (toks, i)
+      val header = Thy_Header.read_tokens pos header_toks
+
+      fun qualify_name {name,imports,keywords} =
+            {name=apfst (Long_Name.qualify ("REPL" ^ string_of_int wid)) name, imports=imports, keywords=keywords}
+      val header = qualify_name header
+
+      (* init theory *)
+      val imports = #imports header
+      val evaluated_theories = the_default Symtab.empty (Thread_Data.get evaluated_theories)
+      fun parse import =
+             case Symtab.lookup evaluated_theories import
+               of SOME thy => thy
+                | NONE     => (
+             case Thy_Info.lookup_theory import
+               of SOME thy => thy
+                | NONE     => (
+             if Long_Name.qualifier import = ""
+             then parse (Long_Name.qualify thy_qualifier import)
+             else raise REPL_fail ("Bad theory import " ^ import)
+            ))
+      val parents =
+            imports |> map (fn (import, _ (*pos*)) => parse import)
+      val parents =
+            if null parents then [Pure] else parents
+   in Resources.begin_theory base_dir header parents
+   |> Config.put_global Printer.show_markup false
+  end
+  end
+
+fun parse_text cfg wid state pos source =
+  let val _ = if can Toplevel.theory_of state <> Toplevel.is_toplevel state then ()
+              else error "BUG: K/aPbPakSCOMOSqoevPh+g"
+      val thy =
+        case try Toplevel.theory_of state
+          of SOME thy => thy
+           | NONE => parse_thy cfg wid pos source
+   in Outer_Syntax.parse_text thy (K thy) pos source
+   |> filter_out Toplevel.is_ignored
+  end
+
+fun RE cfg source : command_outputs =
   case Thread_Data.get state
     of NONE          => {outputs=[], error=SOME "INTERNAL ERROR: state lost"}
      | SOME (s0,cnt) =>
-  case Thread_Data.get Worker_ID
+  case Thread_Data.get Session_ID
     of NONE          => {outputs=[], error=SOME "INTERNAL ERROR: worker ID lost"}
-     | SOME (wid, thy00) =>
-  let val thy = Toplevel.theory_of s0
-                handle Toplevel.UNDEF => thy00
-      val pos = Position.make {
+     | SOME wid =>
+  let val pos = Position.make {
                   line=0, offset=0, end_offset=0, props={label="", file="#REPL", id=string_of_int cnt}}
-      val trs = Outer_Syntax.parse_text thy (K thy) pos source
-             |> filter_out Toplevel.is_ignored
+      val trs = parse_text cfg wid s0 pos source
+(*Outer_Syntax.parse_text thy (K thy) pos source
+             |> filter_out Toplevel.is_ignored*)
 
-      val trim_err = map (#2 o #1)
+      val trim_err = map (trim_makrup o #2 o #1)
       fun catch_state err tr s : command_output = {
               command_name = Toplevel.name_of tr,
               message = get_and_clean_message' wid,
@@ -136,7 +195,7 @@ fun RE source : command_outputs =
                     is_skipped_proof = Toplevel.is_skipped_proof s
                 },
               level   = Toplevel.level s,
-              state   = trim_makrup (Toplevel.string_of_state s),
+              state   = "" (*trim_makrup (Toplevel.string_of_state s)*),
               errors  = trim_err err
           }
 
@@ -171,17 +230,11 @@ fun RE source : command_outputs =
    in Thread_Data.put state (SOME (s', cnt+1))
     ; ret
   end
+  handle REPL_fail E => {outputs=[], error=SOME E}
 
-fun init_repler thy =
-  let val id = serial()
-      val thy0 = (case thy
-                    of SOME some => some
-                     | NONE =>
-                 (case Context.get_generic_context ()
-                    of SOME some => Context.theory_of some
-                     | NONE => Thy_Info.get_theory "Main"))
-              |> Config.put_global Printer.show_markup false
-   in Thread_Data.put Worker_ID (SOME (id, thy0))
+fun init_repler id thy =
+  let 
+   in Thread_Data.put Session_ID (SOME id)
     ; Synchronized.change message_buffer (Inttab.update_new (id, []))
     ; Thread_Data.put state (SOME (Toplevel.make_state thy, 0))
   end

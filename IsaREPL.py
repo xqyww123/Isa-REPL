@@ -15,7 +15,9 @@ class Client:
     """
     The client to connect Isabelle REPL
     """
-    def __init__(self, addr):
+    def __init__(self, addr, thy_qualifier="HOL"):
+        if not isinstance(thy_qualifier, str):
+            raise ValueError("the argument thy_qualifier must be a string")
 
         def parse_address(address):
             host, port = address.split(':')
@@ -27,6 +29,9 @@ class Client:
         self.cout  = self.sock.makefile('wb')
         self.cin   = self.sock.makefile('rb', buffering=0)
         self.unpack= mp.Unpacker(self.cin)
+
+        mp.pack(thy_qualifier, self.cout)
+        self.cout.flush()
 
     def close(self):
         if self.cout:
