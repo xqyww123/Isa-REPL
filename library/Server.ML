@@ -110,25 +110,34 @@ fun startup base_dir_of_theories thy addr0 =
 
           val (thy_qualifier, cin) = MessagePackBinIO.Unpack.doUnpack
                                           (MessagePackBinIO.Unpack.unpackString) cin
+          val cfg = {base_dir=base_dir, thy_qualifier=thy_qualifier}
 
           fun loop cin =
             if BinIO.StreamIO.endOfStream cin
             then ()
-            else let
-                val (source, cin') = MessagePackBinIO.Unpack.doUnpack
-                                          (MessagePackBinIO.Unpack.unpackString) cin
-                val _ = let open MessagePackBinIO.Pack in
+            else let open MessagePackBinIO.Unpack
+                val (source, cin') = doUnpack unpackString cin
+                val cin' = let open MessagePackBinIO.Pack in
                   if String.isPrefix "\005" source
                   then case source
                     of "\005trace" => (
                           REPL.set_trace true;
-                          doPack packBool true cout)
+                          doPack packBool true cout;
+                          cin')
                      | "\005notrace" => (
                           REPL.set_trace false;
-                          doPack packBool true cout)
+                          doPack packBool true cout;
+                          cin')
+                     | "\005lex" => let
+                           val (src, cin'') = doUnpack unpackString cin'
+                           val rets = REPL.lex_commands cfg src
+                           val _ = doPack (packList packString) rets cout
+                        in cin''
+                       end
                   else let
-                    val ret = REPL.RE {base_dir=base_dir, thy_qualifier=thy_qualifier} source
+                    val ret = REPL.RE cfg source
                      in doPack REPL_Serialize.command_outputs_packer ret cout
+                      ; cin'
                     end
                   end
                 val _ = BinIO.StreamIO.flushOut cout

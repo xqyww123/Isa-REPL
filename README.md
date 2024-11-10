@@ -13,5 +13,6 @@ Startup server:
 Run an example client
 ```
 ./example_client.py 127.0.0.1:6666
+./eval_file.py 127.0.0.1:6666 $(isabelle getenv -b ISABELLE_HOME)/src/HOL/List.thy
 ```
 

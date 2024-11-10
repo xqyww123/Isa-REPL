@@ -25,6 +25,7 @@ type command_outputs = {
 type Session_ID = int
 val init_repler : Session_ID -> theory option -> unit
 val RE : {base_dir: Path.T, thy_qualifier: string} -> string -> command_outputs
+val lex_commands : {base_dir: Path.T, thy_qualifier: string} -> string -> string list
 val set_trace : bool -> unit
 
 val the_current_worker_ID  : unit -> Session_ID option
@@ -125,7 +126,7 @@ exception REPL_fail of string
 
 fun is_theory_tok tok = Token.is_kind Token.Command tok andalso Token.content_of tok = "theory"
 
-fun parse_thy {base_dir, thy_qualifier} wid source =
+fun init_thy {base_dir, thy_qualifier} wid source =
   let val toks = Token.tokenize pure_keywords {strict = false} source
       val i = find_index is_theory_tok toks
    in if i = ~1
@@ -161,6 +162,13 @@ fun parse_thy {base_dir, thy_qualifier} wid source =
   end
   end
 
+fun get_thy cfg wid state source = (
+      if can Toplevel.theory_of state <> Toplevel.is_toplevel state then ()
+      else error "BUG: K/aPbPakSCOMOSqoevPh+g"
+    ; case try Toplevel.theory_of state
+          of SOME thy => thy
+           | NONE => init_thy cfg wid source )
+
 (* fun split_commands src *)
 
 fun parse_text' thy init text =
@@ -168,28 +176,35 @@ fun parse_text' thy init text =
   |> Outer_Syntax.parse_spans
   |> map (Command_Span.content #> Outer_Syntax.parse_span thy init);
 
-fun split_thy_headers source =
-  let val toks = Token.tokenize pure_keywords {strict = false} source
-      fun split (_,ret,src) [] = rev (src::ret)
-        | split (m,ret,src) (x :: xs) =
-            if is_theory_tok x
-            then let val m' = the (Position.offset_of (Token.pos_of x)) - 1
+fun lex_split drop_first drop_if_no_meet kws P source =
+  let val toks = Token.tokenize kws {strict = false} source
+      val d = the (Position.offset_of (Token.pos_of (hd toks)))
+      fun split _ met (_,ret,src) [] =
+            rev (if drop_if_no_meet andalso not met then ret else src::ret)
+        | split drop_first met (m,ret,src) (x :: xs) =
+            if P x
+            then let val m' = the (Position.offset_of (Token.pos_of x)) - d
                      val n = m' - m
-                  in split (m', take n src::ret, drop n src) xs
+                  in if n = 0 orelse drop_first
+                  then split false true (m', ret, drop n src) xs
+                  else split false true (m', take n src::ret, drop n src) xs
                  end
-            else split (m,ret, src) xs
-   in split (0,[],source) toks
+            else split drop_first met (m,ret, src) xs
+   in split drop_first false (0,[],source) toks
   end
 
+val split_thy_headers = lex_split false false pure_keywords is_theory_tok
+
 fun parse_text cfg wid state source =
-  let val _ = if can Toplevel.theory_of state <> Toplevel.is_toplevel state then ()
-              else error "BUG: K/aPbPakSCOMOSqoevPh+g"
-      val thy =
-        case try Toplevel.theory_of state
-          of SOME thy => thy
-           | NONE => parse_thy cfg wid source
+  let val thy = get_thy cfg wid state source
    in parse_text' thy (K thy) source
    |> filter_out Toplevel.is_ignored
+  end
+
+fun split_commands cfg wid state source =
+  let val thy = get_thy cfg wid state source
+      val kws = Thy_Header.get_keywords thy
+   in lex_split true true kws (Token.is_kind Token.Command) source
   end
 
 fun set_trace v =
@@ -199,10 +214,10 @@ fun set_trace v =
 
 fun RE cfg source : command_outputs =
   case Thread_Data.get state
-    of NONE          => {outputs=NONE, error=SOME "INTERNAL ERROR: state lost"}
+    of NONE                => {outputs=NONE, error=SOME "INTERNAL ERROR: state lost"}
      | SOME (s0,cnt,trace) =>
   case Thread_Data.get Session_ID
-    of NONE          => {outputs=NONE, error=SOME "INTERNAL ERROR: worker ID lost"}
+    of NONE     => {outputs=NONE, error=SOME "INTERNAL ERROR: worker ID lost"}
      | SOME wid =>
   let val pos = Position.make {
                   line=1, offset=1, end_offset=1, props={label="", file="#REPL", id=string_of_int cnt}}
@@ -273,6 +288,26 @@ fun init_repler id thy =
    in Thread_Data.put Session_ID (SOME id)
     ; Synchronized.change message_buffer (Inttab.update_new (id, []))
     ; Thread_Data.put state (SOME (Toplevel.make_state thy, 0, true))
+  end
+
+
+
+(** Lex commands **)
+
+
+fun lex_commands cfg source =
+  case Thread_Data.get state
+    of NONE                => raise REPL_fail  "INTERNAL ERROR: state lost"
+     | SOME (s0,cnt,trace) =>
+  case Thread_Data.get Session_ID
+    of NONE     => raise REPL_fail "INTERNAL ERROR: worker ID lost"
+     | SOME wid =>
+  let val pos = Position.make {
+                  line=1, offset=1, end_offset=1, props={label="", file="#REPL", id=string_of_int cnt}}
+   in Symbol_Pos.explode (source, pos)
+   |> split_thy_headers
+   |> maps ( split_commands cfg wid s0
+          #> map (Symbol_Pos.implode))
   end
 
 end

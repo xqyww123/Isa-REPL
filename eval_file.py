@@ -22,6 +22,8 @@ def is_empty(obj):
 
 with open(target, "r") as file:
     content = file.read()
+    print("Lex:")
+    print (c.lex(content))
     ret = c.eval(content)
     if not is_empty(ret[1]) and not ret[1] is None:
         print(ret[1])

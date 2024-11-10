@@ -110,7 +110,19 @@ end
 #    by auto
 #""")
 
-
+print ("Lexer helps to splits a script into pieces of commands")
+print(c.lex("""
+(*Boring..*)
+text "Something funny"
+theory KKK
+  imports HHH
+begin
+(*more fun*)
+lemma "ONE + ONE = 2"
+    unfolding ONE_def
+    by auto
+end
+"""))
 
 c.close()
 

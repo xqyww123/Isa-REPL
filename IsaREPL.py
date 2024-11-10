@@ -45,12 +45,18 @@ class Client:
             self.sock = None
 
     def eval(self, source):
+        """
+        We have to emphasize the `eval` method must accept complete commands ---
+        It is strictly forbiddened to split a command into multiple parts individually
+        sent to `eval`. You shouldn't split a command.
+        Given this restriction, it can be helpful to split a script into a sequence of
+        single commands. The `lex` method provides this funciton.
+        """
         if not isinstance(source, str):
             raise ValueError("the argument source must be a string")
         mp.pack(source, self.cout)
         self.cout.flush()
-        ret = self.unpack.unpack()
-        return ret
+        return self.unpack.unpack()
 
     def set_trace (self, enable):
         """
@@ -62,6 +68,21 @@ class Client:
         mp.pack ("\x05trace" if enable else "\x05notrace", self.cout)
         self.cout.flush()
         self.unpack.unpack()
+
+    def lex (self, source):
+        """
+        We have to emphasize the `eval` method must accept complete commands ---
+        It is strictly forbiddened to split a command into multiple parts individually
+        sent to `eval`. You shouldn't split a command.
+        Given this restriction, it can be helpful to split a script into a sequence of
+        single commands. This `lex` provides this funciton.
+        """
+        if not isinstance(source, str):
+            raise ValueError("the argument source must be a string")
+        mp.pack ("\x05lex", self.cout)
+        mp.pack (source, self.cout)
+        self.cout.flush()
+        return self.unpack.unpack()
 
     def boring_parse(data):
         """
