@@ -31,13 +31,15 @@ fun command_output_packer {
         flags  : flags,
         level  : int,
         state  : string,
+        plugin_output: (plugin_name * raw_packer) list,
         errors : string list
-} = packTuple7 (packString,
+} = packTuple8 (packString,
                 packList message_packer,
                 packOption (packString o REPL.trim_makrup o YXML.string_of_body),
                 flags_packer,
                 packInt,
                 packString,
+                packList (packPair (packString, I)),
                 packList packString)
     (   command_name,
         output : message list, (*text printed in Isabelle's output panel*)
@@ -45,6 +47,7 @@ fun command_output_packer {
         flags  : flags,
         level  : int,
         state  : string,
+        plugin_output: (plugin_name * raw_packer) list,
         errors : string list    )
 
 

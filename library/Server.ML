@@ -7,6 +7,11 @@ val kill_server : address -> unit
 
 end
 
+val REPL_ML_sender_DO_NOT_OVERRIDE_ : REPL.collector option Unsynchronized.ref
+      = Unsynchronized.ref NONE
+val REPL_ML_sender_DO_NOT_OVERRIDE_locker_
+      = Synchronized.var "REPL_ML_sender_DO_NOT_OVERRIDE_locker_" ()
+
 structure REPL_Server : REPL_SEVER = struct
 
 type address = string (*IP address:port*)
@@ -63,6 +68,22 @@ fun make_streams socket =
       BinIO.StreamIO.mkOutstream (wr, IO.BLOCK_BUF);
 
   in (in_stream, out_stream) end
+
+fun compile_ML source =
+  let val pos = Position.make {
+              line=1, offset=1, end_offset=1, props={label="", file="#REPL-ML", id=""}}
+      val source' = "REPL_ML_sender_DO_NOT_OVERRIDE_ := SOME (" ^ source ^ ")"
+      val ret : REPL.collector option Unsynchronized.ref = Unsynchronized.ref NONE
+   in Synchronized.change REPL_ML_sender_DO_NOT_OVERRIDE_locker_ (fn () => (
+        ML_Context.eval_source
+            (ML_Compiler.verbose true ML_Compiler.flags)
+            (Input.source true source' (Position.range (pos,pos))) ;
+        ret := ! REPL_ML_sender_DO_NOT_OVERRIDE_ ;
+        REPL_ML_sender_DO_NOT_OVERRIDE_ := NONE
+      ))
+    ; the (! ret)
+  end
+
 
 val session_ID_counter = Counter.make ()
 
@@ -125,18 +146,31 @@ fun startup base_dir_of_theories thy addr0 =
                     in case source
                     of "\005trace" => (
                           REPL.set_trace true;
-                          output packBool true;
+                          output packUnit ();
                           cin')
                      | "\005notrace" => (
                           REPL.set_trace false;
-                          output packBool true;
+                          output packUnit ();
                           cin')
                      | "\005lex" => let
-                           val (src, cin'') = doUnpack unpackString cin'
-                           val rets = REPL.lex_commands cfg src
-                           val _ = output (packList packString) rets
-                        in cin''
-                       end
+                               val (src, cin'') = doUnpack unpackString cin'
+                               val rets = REPL.lex_commands cfg src
+                               val _ = output (packList packString) rets
+                            in cin''
+                           end
+                     | "\005plugin" => let
+                               val ((name, src), cin'') = doUnpack (unpackPair (unpackString, unpackString)) cin'
+                               val plugin = (name, compile_ML src)
+                               val _ = REPL.register_plugin plugin
+                               val _ = output packUnit ()
+                            in cin''
+                           end
+                     | "\005unplugin" => let
+                               val (name, cin'') = doUnpack unpackString cin'
+                               val _ = REPL.delete_plugin name
+                               val _ = output packUnit ()
+                            in cin''
+                           end
                     end handle REPL.REPL_fail E => (
                            doPack (packPair (packUnit, packString)) ((), E) cout ;
                            cin')

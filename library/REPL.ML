@@ -2,6 +2,13 @@ signature REPL = sig
 
 datatype message_type = NORMAL | TRACING | WARNING
 type message = message_type * string
+
+type collector = Toplevel.state -> (BinIO.StreamIO.outstream -> unit) option *
+                                   Toplevel.state option
+type plugin_name = string
+type plugin  = plugin_name * collector
+type plugins = plugin list
+
 type flags = {
         is_toplevel: bool,
         is_theory  : bool,
@@ -15,6 +22,7 @@ type command_output = {
         flags  : flags,
         level  : int,
         state  : string,
+        plugin_output: (plugin_name * MessagePackBinIO.Pack.raw_packer) list,
         errors : string list
 }
 type command_outputs = {
@@ -30,9 +38,19 @@ val RE : {base_dir: Path.T, thy_qualifier: string} -> string -> command_outputs
 val lex_commands : {base_dir: Path.T, thy_qualifier: string} -> string -> string list
 val set_trace : bool -> unit
 
+(* Plugin *)
+
+val register_plugin : plugin -> unit
+val delete_plugin : plugin_name -> unit
+
+(* Message *)
+
 val the_current_worker_ID  : unit -> Session_ID option
 val get_and_clean_message' : Session_ID -> message list
 val get_and_clean_message  : unit -> message list
+
+
+(* Tools *)
 
 val trim_makrup : string -> string
 
@@ -60,6 +78,13 @@ type flags = {
         is_proof   : bool,
         is_skipped_proof: bool
 }
+
+type collector = Toplevel.state -> (BinIO.StreamIO.outstream -> unit) option *
+                                   Toplevel.state option
+type plugin_name = string
+type plugin  = plugin_name * collector
+type plugins = plugin list
+
 type command_output = {
         command_name : string,
         output  : message list, (*text printed in Isabelle's output panel*)
@@ -67,6 +92,7 @@ type command_output = {
         flags   : flags,
         level   : int,
         state   : string,
+        plugin_output: (plugin_name * MessagePackBinIO.Pack.raw_packer) list,
         errors  : string list
 }
 type command_outputs = {
@@ -74,12 +100,29 @@ type command_outputs = {
         error : string option
 }
 
+
+(** Plugin **)
+
+fun run_plugins (plugins : plugins) s =
+  let fun loop ret [] s = (ret, s)
+        | loop ret ((name,collector)::plugins) s =
+        case collector s
+          of (SOME out, SOME s') => loop ((name,out)::ret) plugins s'
+           | (SOME out, NONE   ) => loop ((name,out)::ret) plugins s
+           | (NONE    , SOME s') => loop ret plugins s'
+           | (NONE    , NONE   ) => loop ret plugins s
+   in loop [] plugins s
+  end
+
+val add_plugin : (plugin -> plugins -> plugins) = AList.update (op =)
+val remove_plugin : (string -> plugins -> plugins) = AList.delete (op =)
+
 (** Worker ID **)
 
 type Session_ID = int
-val Session_ID = Thread_Data.var () : Session_ID Thread_Data.var;
+val Session_ID = Thread_Data.var () : (Session_ID * plugins) Thread_Data.var;
 
-fun the_current_worker_ID () = Thread_Data.get Session_ID
+fun the_current_worker_ID () = Option.map #1 (Thread_Data.get Session_ID)
 
 (** Message **)
 
@@ -94,13 +137,13 @@ fun get_and_clean_message' wid =
 
 fun get_and_clean_message () =
   case Thread_Data.get Session_ID
-    of SOME id => get_and_clean_message' id
+    of SOME (id, _) => get_and_clean_message' id
      | NONE => []
 
 fun init_printers () =
   let fun output_fn typ fallback = (fn ms =>
             case Thread_Data.get Session_ID
-              of SOME id =>
+              of SOME (id, _) =>
                     Synchronized.change message_buffer
                         (Inttab.map_entry id (fn L => (typ, trim_makrup (implode ms)) :: L))
                | NONE => fallback ms )
@@ -223,15 +266,15 @@ fun RE cfg source : command_outputs =
     of NONE                => {outputs=NONE, error=SOME "INTERNAL ERROR: state lost"}
      | SOME (s0,cnt,trace) =>
   case Thread_Data.get Session_ID
-    of NONE     => {outputs=NONE, error=SOME "INTERNAL ERROR: worker ID lost"}
-     | SOME wid =>
+    of NONE                => {outputs=NONE, error=SOME "INTERNAL ERROR: worker ID lost"}
+     | SOME (wid, plugins) =>
   let val pos = Position.make {
                   line=1, offset=1, end_offset=1, props={label="", file="#REPL", id=string_of_int cnt}}
       val srcs = Symbol_Pos.explode (source, pos)
               |> split_thy_headers
 
       val trim_err = map (trim_makrup o #2 o #1)
-      fun catch_state err tr s : command_output = {
+      fun catch_state plugin_output err tr s : command_output = {
               command_name = Toplevel.name_of tr,
               output  = get_and_clean_message' wid,
               latex   = Toplevel.output_of s,
@@ -243,6 +286,7 @@ fun RE cfg source : command_outputs =
                 },
               level   = Toplevel.level s,
               state   = trim_makrup (Toplevel.string_of_state s),
+              plugin_output = plugin_output,
               errors  = trim_err err
           }
 
@@ -258,6 +302,7 @@ fun RE cfg source : command_outputs =
                 },
               level   = Toplevel.level s,
               state   = "",
+              plugin_output = [],
               errors  = trim_err err
           }
 
@@ -270,8 +315,9 @@ fun RE cfg source : command_outputs =
               of (err, NONE)    =>
                     (mk_command_outputs (if trace then err_state err tr s::ret else [])
                                         (SOME "Some error happens"), s0)
-               | (err, SOME s') =>
-                let val _ = if Toplevel.is_end_theory s'
+               | (err, SOME s'0) =>
+                let val (plugin_output, s') = run_plugins plugins s'0
+                    val _ = if Toplevel.is_end_theory s'
                             then let
                               val thys = the_default Symtab.empty (Thread_Data.get evaluated_theories)
                               val thy  = Toplevel.end_theory pos s'
@@ -279,7 +325,7 @@ fun RE cfg source : command_outputs =
                               in Thread_Data.put evaluated_theories (SOME thys')
                              end
                             else ()
-                 in loop (if trace then (catch_state err tr s')::ret else []) trs srcs s'
+                 in loop (if trace then (catch_state plugin_output err tr s')::ret else []) trs srcs s'
                 end
 
       val (ret, s') = loop [] [] srcs s0
@@ -291,7 +337,7 @@ fun RE cfg source : command_outputs =
 
 fun init_repler id thy =
   let 
-   in Thread_Data.put Session_ID (SOME id)
+   in Thread_Data.put Session_ID (SOME (id, []))
     ; Synchronized.change message_buffer (Inttab.update_new (id, []))
     ; Thread_Data.put state (SOME (Toplevel.make_state thy, 0, true))
   end
@@ -308,12 +354,12 @@ fun split_commands cfg wid state source =
   end
 
 fun lex_commands cfg source =
+  case Thread_Data.get Session_ID
+    of NONE         => raise REPL_fail "INTERNAL ERROR: worker ID lost"
+     | SOME (wid,_) =>
   case Thread_Data.get state
     of NONE                => raise REPL_fail  "INTERNAL ERROR: state lost"
      | SOME (s0,cnt,_) =>
-  case Thread_Data.get Session_ID
-    of NONE     => raise REPL_fail "INTERNAL ERROR: worker ID lost"
-     | SOME wid =>
   let val pos = Position.make {
                   line=1, offset=1, end_offset=1, props={label="", file="#REPL", id=string_of_int cnt}}
       fun parse [] = []
@@ -334,5 +380,20 @@ fun lex_commands cfg source =
    |> parse
    |> flat
   end
+
+(** Plugin II **)
+
+fun register_plugin plugin =
+  case Thread_Data.get Session_ID
+    of NONE               => raise REPL_fail "INTERNAL ERROR: worker ID lost"
+     | SOME (wid,plugins) =>
+        Thread_Data.put Session_ID (SOME (wid, add_plugin plugin plugins))
+
+fun delete_plugin name =
+  case Thread_Data.get Session_ID
+    of NONE               => raise REPL_fail "INTERNAL ERROR: worker ID lost"
+     | SOME (wid,plugins) =>
+        Thread_Data.put Session_ID (SOME (wid, remove_plugin name plugins))
+
 
 end

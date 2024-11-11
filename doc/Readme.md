@@ -30,14 +30,14 @@ Run `./repl_server.sh` to see the full explanation of the arguments and options.
 Every interface of our client is will documented (it is highly recommended to read our [source](./IsaREPL/IsaREPL.py)). Some examples are given in [the example folder](./examples).
 ```
 # Run an example
-./examples/example1.py
+./examples/example_eval.py 127.0.0.1:6666
 ```
 
 ## Notes
 
 ### Concurrency
 
-This REPL supports concurrent evaluation of multiple files. However, to ensure proper error tracking and result tracing, it disables Isabelle's concurrency between commands. While Isabelle typically executes `by` commands asynchronously (continuing to the next command before completion), this REPL enforces synchronous evaluation. Each command must complete before the next begins, allowing for accurate capture and reporting of any failures.
+This REPL supports concurrent evaluation of multiple files. However, to ensure proper error tracking and result tracing, it disables Isabelle's concurrency between commands within a single theory file. While Isabelle typically executes `by` commands asynchronously (continuing to the next command before completion), this REPL enforces synchronous evaluation. Each command must complete before the next begins, allowing for accurate capture and reporting of any failures.
 
 Sledgehammer (via our `auto_sledgehamemr` wrapper, see [example](./examples/example_sledgehammer.py)) is still concurrent.
 ### Communication Protocol
