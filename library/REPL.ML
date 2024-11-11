@@ -143,16 +143,22 @@ fun init_thy {base_dir, thy_qualifier} wid source =
       val imports = #imports header
       val evaluated_theories = the_default Symtab.empty (Thread_Data.get evaluated_theories)
       fun parse import =
-            case Symtab.lookup evaluated_theories import
-              of SOME thy => thy
-               | NONE     => (
-            case Thy_Info.lookup_theory import
-              of SOME thy => thy
-               | NONE     => (
-             if Long_Name.is_qualified import
-             then raise REPL_fail ("Bad theory import " ^ import)
-             else parse (Long_Name.qualify thy_qualifier import)
-            ))
+        let val can_load = Execution.is_running Document_ID.none
+            fun load can_load import =
+              case Symtab.lookup evaluated_theories import
+                of SOME thy => thy
+                 | NONE     => (
+              case Thy_Info.lookup_theory import
+                of SOME thy => thy
+                 | NONE     => (
+               if Long_Name.is_qualified import
+               then if can_load
+               then (Thy_Info.use_thy import; load false import)
+               else raise REPL_fail ("Bad theory import " ^ import)
+               else load can_load (Long_Name.qualify thy_qualifier import)
+              ))
+         in load can_load import
+        end
       val parents =
             imports |> map (fn (import, _ (*pos*)) => parse import)
       val parents =

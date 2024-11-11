@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "IsaREPL"
+version = "0.1.0"
+description = "Isabelle REPL client"
+readme = "README.md"
+license = {file = "LICENSE"}
+authors = [
+    { name="Qiyuan Xu", email="xqyww123@gmail.com" },
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+dependencies = ["msgpack"]
+
+[project.urls]
+"Homepage" = "https://github.com/xqyww123/Isa-REPL"
+
+[tool.setuptools.packages.find]
+include = ["IsaREPL", "IsaREPL.*"]
+exclude = ["library", "library.*", "contrib", "contrib.*"]

@@ -95,8 +95,8 @@ fun startup base_dir_of_theories thy addr0 =
    in writeln msg
     ; Output.physical_stdout msg
     ; Output.physical_stderr msg
-    ; Isabelle_Thread.fork {name="REPL server " ^ addr0, stack_limit=NONE, interrupts=true} (fn () => (
-      Synchronized.change servers (Symtab.update_new (addr0, Thread.self ()))
+  (* ; Isabelle_Thread.fork {name="REPL server " ^ addr0, stack_limit=NONE, interrupts=true} (fn () => (
+      Synchronized.change servers (Symtab.update_new (addr0, Thread.self ())) *)
     ; while true do
       let val (conn,sender) = Socket.accept socket
           val (cin, cout) = make_streams conn
@@ -143,13 +143,13 @@ fun startup base_dir_of_theories thy addr0 =
                 val _ = BinIO.StreamIO.flushOut cout
              in loop cin'
             end
-       in Isabelle_Thread.fork {name="REPL-worker", stack_limit=NONE, interrupts=true}
-                               (fn () => ( REPL.init_repler wid thy
-                                         ; loop cin ))
-      end
-        handle E => (
+       in (* Isabelle_Thread.fork {name="REPL-worker", stack_limit=NONE, interrupts=true}
+                               (fn () => ( *) REPL.init_repler wid thy
+                                         ; loop cin (* )) *)
+      end ; Thread.self()
+        (* handle E => (
         Synchronized.change servers (Symtab.delete addr0) ;
-        Exn.reraise E) ))
+        Exn.reraise E) )) *)
   end
 
 fun kill_server address =

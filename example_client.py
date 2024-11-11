@@ -34,8 +34,6 @@ imports Sledgehammer Lifting_Set
 begin
 """)
 
-c.set_trace(False)
-
 echo_eval("""
 datatype (set: 'a) list =
     Nil  ("[]")
@@ -56,11 +54,10 @@ definition "ONE = (1::nat)"
 end
 
 theory HHH
-  imports List
+  imports List "Auto_Sledgehammer.Auto_Sledgehammer"
 begin
 lemma "ONE + ONE = 2"
-    unfolding ONE_def
-    by auto
+    by auto_sledgehammer
 end
 
 theory GGG
