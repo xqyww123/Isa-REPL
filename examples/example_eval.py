@@ -1,8 +1,10 @@
 #!/bin/env python
 USAGE = """
-example_client.py <ADDRESS OF SERVER>
+USAGE: example_eval.py <ADDRESS OF SERVER>
 
 Argument <ADDRESS OF SERVER> is necessary.
+
+This script demonstrates the basic usage of REPL.
 """
 
 from IsaREPL import Client
@@ -15,16 +17,14 @@ if len(sys.argv) != 2:
     exit(1)
 
 addr = sys.argv[1]
-c = Client(addr)
 
-def pp(x):
-    print(json.dumps(x, indent=2))
-    return x
+c = Client(addr)
 
 def echo_eval (src):
     print('>>> '.join(src.splitlines(True)))
     ret = c.silly_eval(src)
-    return pp(ret)
+    print(json.dumps(ret, indent=2))
+    return ret
 
 echo_eval ("""
 section \<open>The datatype of finite lists\<close>
@@ -45,19 +45,24 @@ for
 where
   "tl [] = []"
 
-
+context begin
 lemma
   "(1::int) + 2 = 3"
   by smt
+end
+
+notepad begin
+end
 
 definition "ONE = (1::nat)"
 end
 
 theory HHH
-  imports List "Auto_Sledgehammer.Auto_Sledgehammer"
+  imports List
 begin
 lemma "ONE + ONE = 2"
-    by auto_sledgehammer
+    unfolding ONE_def
+    by auto
 end
 
 theory GGG
@@ -106,20 +111,4 @@ end
 #    unfolding ONE_def TWO_def
 #    by auto
 #""")
-
-print ("Lexer helps to splits a script into pieces of commands")
-print(c.lex("""
-(*Boring..*)
-text "Something funny"
-theory KKK
-  imports HHH
-begin
-(*more fun*)
-lemma "ONE + ONE = 2"
-    unfolding ONE_def
-    by auto
-end
-"""))
-
-c.close()
 

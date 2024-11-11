@@ -26,8 +26,8 @@ val message_packer = packPair (message_type_packer, packString)
 
 fun command_output_packer {
         command_name : string,
-        message: message list, (*text printed in Isabelle's output panel*)
-        output : Latex.text option, (*text, section, and other latex commands*)
+        output : message list, (*text printed in Isabelle's output panel*)
+        latex  : Latex.text option, (*text, section, and other latex commands*)
         flags  : flags,
         level  : int,
         state  : string,
@@ -40,8 +40,8 @@ fun command_output_packer {
                 packString,
                 packList packString)
     (   command_name,
-        message: message list, (*text printed in Isabelle's output panel*)
-        output : Latex.text option, (*text, section, and other latex commands*)
+        output : message list, (*text printed in Isabelle's output panel*)
+        latex  : Latex.text option, (*text, section, and other latex commands*)
         flags  : flags,
         level  : int,
         state  : string,

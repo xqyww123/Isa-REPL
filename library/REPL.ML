@@ -10,8 +10,8 @@ type flags = {
 }
 type command_output = {
         command_name : string,
-        message: message list, (*text printed in Isabelle's output panel*)
-        output : Latex.text option, (*text, section, and other latex commands*)
+        output: message list,      (*text printed in Isabelle's output panel*)
+        latex : Latex.text option, (*text, section, and other latex commands*)
         flags  : flags,
         level  : int,
         state  : string,
@@ -21,6 +21,8 @@ type command_outputs = {
         outputs: command_output list option,
         error : string option
 }
+
+exception REPL_fail of string
 
 type Session_ID = int
 val init_repler : Session_ID -> theory option -> unit
@@ -60,8 +62,8 @@ type flags = {
 }
 type command_output = {
         command_name : string,
-        message : message list, (*text printed in Isabelle's output panel*)
-        output  : Latex.text option, (*text, section, and other latex commands*)
+        output  : message list, (*text printed in Isabelle's output panel*)
+        latex   : Latex.text option, (*text, section, and other latex commands*)
         flags   : flags,
         level   : int,
         state   : string,
@@ -109,7 +111,7 @@ fun init_printers () =
 
 val _ = init_printers ()
 
-val _ = Multithreading.parallel_proofs := 0 (*TODO: disable me!*)
+(*val _ = Multithreading.parallel_proofs := 0 (*TODO: disable me!*)*)
 
 (** RE **)
 
@@ -126,11 +128,11 @@ exception REPL_fail of string
 
 fun is_theory_tok tok = Token.is_kind Token.Command tok andalso Token.content_of tok = "theory"
 
-fun init_thy {base_dir, thy_qualifier} wid source =
+fun init_thy ignore_imports {base_dir, thy_qualifier} wid source =
   let val toks = Token.tokenize pure_keywords {strict = false} source
       val i = find_index is_theory_tok toks
    in if i = ~1
-   then Pure
+   then NONE
    else let
       val header_toks = List.drop (toks, i)
       val header = Thy_Header.read_tokens (Token.pos_of (hd header_toks)) header_toks
@@ -153,18 +155,22 @@ fun init_thy {base_dir, thy_qualifier} wid source =
                  | NONE     => (
                if Long_Name.is_qualified import
                then if can_load
-               then (Thy_Info.use_thy import; load false import)
+               then ((Thy_Info.use_thy import
+                      handle ERROR _ => raise REPL_fail ("Bad theory import " ^ import));
+                     load false import)
                else raise REPL_fail ("Bad theory import " ^ import)
                else load can_load (Long_Name.qualify thy_qualifier import)
               ))
          in load can_load import
         end
       val parents =
-            imports |> map (fn (import, _ (*pos*)) => parse import)
+            if ignore_imports then []
+            else imports |> map (fn (import, _ (*pos*)) => parse import)
       val parents =
             if null parents then [Pure] else parents
    in Resources.begin_theory base_dir header parents
    |> Config.put_global Printer.show_markup false
+   |> SOME
   end
   end
 
@@ -173,7 +179,7 @@ fun get_thy cfg wid state source = (
       else error "BUG: K/aPbPakSCOMOSqoevPh+g"
     ; case try Toplevel.theory_of state
           of SOME thy => thy
-           | NONE => init_thy cfg wid source )
+           | NONE => the_default Pure (init_thy false cfg wid source ))
 
 (* fun split_commands src *)
 
@@ -207,12 +213,6 @@ fun parse_text cfg wid state source =
    |> filter_out Toplevel.is_ignored
   end
 
-fun split_commands cfg wid state source =
-  let val thy = get_thy cfg wid state source
-      val kws = Thy_Header.get_keywords thy
-   in lex_split true true kws (Token.is_kind Token.Command) source
-  end
-
 fun set_trace v =
   case Thread_Data.get state
     of NONE => raise REPL_fail "INTERNAL ERROR: state lost"
@@ -233,8 +233,8 @@ fun RE cfg source : command_outputs =
       val trim_err = map (trim_makrup o #2 o #1)
       fun catch_state err tr s : command_output = {
               command_name = Toplevel.name_of tr,
-              message = get_and_clean_message' wid,
-              output  = Toplevel.output_of s,
+              output  = get_and_clean_message' wid,
+              latex   = Toplevel.output_of s,
               flags   = {
                     is_toplevel = Toplevel.is_toplevel s,
                     is_theory   = Toplevel.is_theory s,
@@ -248,8 +248,8 @@ fun RE cfg source : command_outputs =
 
       fun err_state err tr s : command_output = {
               command_name = Toplevel.name_of tr,
-              message = [],
-              output  = NONE,
+              output  = [],
+              latex   = NONE,
               flags   = {
                     is_toplevel = Toplevel.is_toplevel s,
                     is_theory   = Toplevel.is_theory s,
@@ -301,19 +301,38 @@ fun init_repler id thy =
 (** Lex commands **)
 
 
+fun split_commands cfg wid state source =
+  let val thy = get_thy cfg wid state source
+      val kws = Thy_Header.get_keywords thy
+   in lex_split true true kws (Token.is_kind Token.Command) source
+  end
+
 fun lex_commands cfg source =
   case Thread_Data.get state
     of NONE                => raise REPL_fail  "INTERNAL ERROR: state lost"
-     | SOME (s0,cnt,trace) =>
+     | SOME (s0,cnt,_) =>
   case Thread_Data.get Session_ID
     of NONE     => raise REPL_fail "INTERNAL ERROR: worker ID lost"
      | SOME wid =>
   let val pos = Position.make {
                   line=1, offset=1, end_offset=1, props={label="", file="#REPL", id=string_of_int cnt}}
+      fun parse [] = []
+        | parse (src::srcs) =
+        let val thy = case init_thy true cfg wid src
+                        of SOME thy => thy
+                         | NONE => the_default Pure (try Toplevel.theory_of s0)
+            val kws = Thy_Header.get_keywords thy
+            val ret = lex_split true true kws (Token.is_kind Token.Command) src
+
+            val thys = the_default Symtab.empty (Thread_Data.get evaluated_theories)
+            val thys'= Symtab.update_new (Context.theory_name {long=false} thy, thy) thys
+         in map (Symbol_Pos.implode) ret
+         :: Thread_Data.setmp evaluated_theories (SOME thys') parse srcs
+        end
    in Symbol_Pos.explode (source, pos)
    |> split_thy_headers
-   |> maps ( split_commands cfg wid s0
-          #> map (Symbol_Pos.implode))
+   |> parse
+   |> flat
   end
 
 end

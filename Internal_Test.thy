@@ -1,4 +1,4 @@
-theory Isa_REPL_example
+theory Internal_Test
   imports Isa_REPL "Auto_Sledgehammer.Auto_Sledgehammer"
 begin
 

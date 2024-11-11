@@ -1,6 +1,6 @@
 #!/bin/bash
 
-if [[ $# -le 3 ]] ; then
+if [[ $# -lt 3 ]] ; then
   cat <<EOF
 This is Isabelle REPL server.
 
@@ -70,6 +70,14 @@ for val in "${l_values[@]}"; do
     formatted_l_values+="\"$escaped_val\" "
 done
 
+options=""
+
+for val in "${other_options[@]}"; do
+    escaped_val="${val//\"/\\\"}"
+    options+="$escaped_val "
+done
+
+echo $options
 
 echo "Hi, this is Isabelle REPL Server."
 echo "When you see \"Running REPL$$ ...\", it means I am successfully lanched and listening on $ADDR."
@@ -91,9 +99,10 @@ session REPL$$ = "$(printf '%b' $BASE_SESSION)"
    theories REPL$$
 EOF
 
-isabelle build -D $DIR REPL$$
+echo isabelle build -D $DIR $options REPL$$
+isabelle build -D $DIR $options REPL$$
 
-rm $DIR -r
+#rm $DIR -r
 
 #isabelle process -l $2 -f $base/contrib/mlmsgpack/mlmsgpack-aux.sml -f $base/contrib/mlmsgpack/realprinter-packreal.sml -f $base/contrib/mlmsgpack/mlmsgpack.sml -f $base/library/REPL.ML -f $base/library/REPL_serializer.ML -f $base/library/Server.ML -e "REPL_Server.startup ${(qqq)3} NONE ${(qqq)1}"
 

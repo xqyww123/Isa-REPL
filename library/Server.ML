@@ -95,8 +95,8 @@ fun startup base_dir_of_theories thy addr0 =
    in writeln msg
     ; Output.physical_stdout msg
     ; Output.physical_stderr msg
-  (* ; Isabelle_Thread.fork {name="REPL server " ^ addr0, stack_limit=NONE, interrupts=true} (fn () => (
-      Synchronized.change servers (Symtab.update_new (addr0, Thread.self ())) *)
+    ; Isabelle_Thread.fork {name="REPL server " ^ addr0, stack_limit=NONE, interrupts=true} (fn () => (
+      Synchronized.change servers (Symtab.update_new (addr0, Thread.self ()))
     ; while true do
       let val (conn,sender) = Socket.accept socket
           val (cin, cout) = make_streams conn
@@ -119,21 +119,27 @@ fun startup base_dir_of_theories thy addr0 =
                 val (source, cin') = doUnpack unpackString cin
                 val cin' = let open MessagePackBinIO.Pack in
                   if String.isPrefix "\005" source
-                  then case source
+                  then let
+                       fun output pack x =
+                          doPack (packPair (pack, packUnit)) (x, ()) cout
+                    in case source
                     of "\005trace" => (
                           REPL.set_trace true;
-                          doPack packBool true cout;
+                          output packBool true;
                           cin')
                      | "\005notrace" => (
                           REPL.set_trace false;
-                          doPack packBool true cout;
+                          output packBool true;
                           cin')
                      | "\005lex" => let
                            val (src, cin'') = doUnpack unpackString cin'
                            val rets = REPL.lex_commands cfg src
-                           val _ = doPack (packList packString) rets cout
+                           val _ = output (packList packString) rets
                         in cin''
                        end
+                    end handle REPL.REPL_fail E => (
+                           doPack (packPair (packUnit, packString)) ((), E) cout ;
+                           cin')
                   else let
                     val ret = REPL.RE cfg source
                      in doPack REPL_Serialize.command_outputs_packer ret cout
@@ -143,13 +149,13 @@ fun startup base_dir_of_theories thy addr0 =
                 val _ = BinIO.StreamIO.flushOut cout
              in loop cin'
             end
-       in (* Isabelle_Thread.fork {name="REPL-worker", stack_limit=NONE, interrupts=true}
-                               (fn () => ( *) REPL.init_repler wid thy
-                                         ; loop cin (* )) *)
-      end ; Thread.self()
-        (* handle E => (
+       in Isabelle_Thread.fork {name="REPL-worker", stack_limit=NONE, interrupts=true}
+                               (fn () => ( REPL.init_repler wid thy
+                                         ; loop cin ))
+      end
+      handle E => (
         Synchronized.change servers (Symtab.delete addr0) ;
-        Exn.reraise E) )) *)
+       Exn.reraise E) ))
   end
 
 fun kill_server address =
