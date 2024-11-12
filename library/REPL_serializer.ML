@@ -39,7 +39,7 @@ fun command_output_packer {
                 flags_packer,
                 packInt,
                 packString,
-                packList (packPair (packString, I)),
+                packPairList (packString, I),
                 packList packString)
     (   command_name,
         output : message list, (*text printed in Isabelle's output panel*)

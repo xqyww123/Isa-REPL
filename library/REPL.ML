@@ -3,7 +3,7 @@ signature REPL = sig
 datatype message_type = NORMAL | TRACING | WARNING
 type message = message_type * string
 
-type collector = Toplevel.state -> (BinIO.StreamIO.outstream -> unit) option *
+type collector = Toplevel.state -> MessagePackBinIO.Pack.raw_packer option *
                                    Toplevel.state option
 type plugin_name = string
 type plugin  = plugin_name * collector
@@ -179,6 +179,7 @@ fun init_thy ignore_imports {base_dir, thy_qualifier} wid source =
    else let
       val header_toks = List.drop (toks, i)
       val header = Thy_Header.read_tokens (Token.pos_of (hd header_toks)) header_toks
+      val sname = #name header
 
       fun qualify_name {name,imports,keywords} =
             {name=apfst (Long_Name.qualify ("REPL" ^ string_of_int wid)) name, imports=imports, keywords=keywords}
@@ -187,6 +188,10 @@ fun init_thy ignore_imports {base_dir, thy_qualifier} wid source =
       (* init theory *)
       val imports = #imports header
       val evaluated_theories = the_default Symtab.empty (Thread_Data.get evaluated_theories)
+      val _ = if Symtab.defined evaluated_theories (#1 sname)
+              then raise REPL_fail ("Theory " ^ #1 sname ^ " has been defined.")
+              else ()
+
       fun parse import =
         let val can_load = Execution.is_running Document_ID.none
             fun load can_load import =

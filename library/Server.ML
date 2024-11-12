@@ -69,17 +69,19 @@ fun make_streams socket =
 
   in (in_stream, out_stream) end
 
-fun compile_ML source =
+fun compile_ML ctxt source =
   let val pos = Position.make {
               line=1, offset=1, end_offset=1, props={label="", file="#REPL-ML", id=""}}
-      val source' = "REPL_ML_sender_DO_NOT_OVERRIDE_ := SOME (" ^ source ^ ")"
       val ret : REPL.collector option Unsynchronized.ref = Unsynchronized.ref NONE
    in Synchronized.change REPL_ML_sender_DO_NOT_OVERRIDE_locker_ (fn () => (
-        ML_Context.eval_source
-            (ML_Compiler.verbose true ML_Compiler.flags)
-            (Input.source true source' (Position.range (pos,pos))) ;
+
+        ML_Context.expression pos
+            (ML_Lex.read "REPL_ML_sender_DO_NOT_OVERRIDE_ := SOME (" @
+             ML_Lex.read source @
+             ML_Lex.read ")")
+            ctxt ;
         ret := ! REPL_ML_sender_DO_NOT_OVERRIDE_ ;
-        REPL_ML_sender_DO_NOT_OVERRIDE_ := NONE
+        REPL_ML_sender_DO_NOT_OVERRIDE_ := NONE 
       ))
     ; the (! ret)
   end
@@ -89,12 +91,15 @@ val session_ID_counter = Counter.make ()
 
 val servers = Synchronized.var "REPL Servers" (Symtab.empty : Thread.thread Symtab.table)
 
-fun startup base_dir_of_theories thy addr0 =
+fun startup base_dir_of_theories thy0 addr0 =
   let val _ = if File.is_dir base_dir_of_theories
               then warning ("The base_dir_of_theories already exists. The shell may overwrite files.")
               else if File.exists base_dir_of_theories
               then error ("The base_dir_of_theories must be a directory : " ^ File.standard_path base_dir_of_theories)
               else OS.FileSys.mkDir (File.standard_path base_dir_of_theories)
+
+      val ctxt = case thy0 of SOME some => Context.Theory some
+                            | NONE => Context.the_generic_context ()
 
       val socket: Socket.passive INetSock.stream_sock = INetSock.TCP.socket ()
       val _ = Socket.Ctl.setREUSEADDR (socket, true)
@@ -138,7 +143,7 @@ fun startup base_dir_of_theories thy addr0 =
             then ()
             else let open MessagePackBinIO.Unpack
                 val (source, cin') = doUnpack unpackString cin
-                val cin' = let open MessagePackBinIO.Pack in
+                val cin' = let open MessagePackBinIO.Pack in (
                   if String.isPrefix "\005" source
                   then let
                        fun output pack x =
@@ -160,7 +165,7 @@ fun startup base_dir_of_theories thy addr0 =
                            end
                      | "\005plugin" => let
                                val ((name, src), cin'') = doUnpack (unpackPair (unpackString, unpackString)) cin'
-                               val plugin = (name, compile_ML src)
+                               val plugin = (name, compile_ML ctxt src)
                                val _ = REPL.register_plugin plugin
                                val _ = output packUnit ()
                             in cin''
@@ -178,18 +183,22 @@ fun startup base_dir_of_theories thy addr0 =
                     val ret = REPL.RE cfg source
                      in doPack REPL_Serialize.command_outputs_packer ret cout
                       ; cin'
-                    end
+                    end )
+                  handle E => (
+                      doPack (packPair (packUnit, packString))
+                             ((), REPL.trim_makrup (Runtime.exn_message E)) cout ;
+                      cin')
                   end
                 val _ = BinIO.StreamIO.flushOut cout
              in loop cin'
             end
-       in Isabelle_Thread.fork {name="REPL-worker", stack_limit=NONE, interrupts=true}
-                               (fn () => ( REPL.init_repler wid thy
-                                         ; loop cin ))
+       in  Isabelle_Thread.fork {name="REPL-worker", stack_limit=NONE, interrupts=true}
+                               (fn () => ( REPL.init_repler wid thy0
+                                         ; loop cin  ))
       end
       handle E => (
         Synchronized.change servers (Symtab.delete addr0) ;
-       Exn.reraise E) ))
+        Exn.reraise E) ))
   end
 
 fun kill_server address =

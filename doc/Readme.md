@@ -5,7 +5,8 @@ Unofficial support for Isabelle's Read-Eval-Print-Loop.
 
 - Python Client, easy for Machine Learning.
 - Full support for all Isabelle commands
-- Capability to trace proof state and output panel for each step of evaluation.
+- Tracing proof state and output panel for each step of evaluation.
+	- Plugin: inserting Isabelle/ML code to collect any data you want directly from Isabelle's internal representations ([example](./examples/example_plugin.py)).
 - Socket based remote communication
 - Concurrency
 
@@ -35,6 +36,9 @@ Every interface of our client is will documented (it is highly recommended to re
 
 ## Notes
 
+### Documents
+
+All documents are given as docstrings attaching to Python client interfaces, see [the source](./IsaREPL/IsaREPL.py).
 ### Concurrency
 
 This REPL supports concurrent evaluation of multiple files. However, to ensure proper error tracking and result tracing, it disables Isabelle's concurrency between commands within a single theory file. While Isabelle typically executes `by` commands asynchronously (continuing to the next command before completion), this REPL enforces synchronous evaluation. Each command must complete before the next begins, allowing for accurate capture and reporting of any failures.

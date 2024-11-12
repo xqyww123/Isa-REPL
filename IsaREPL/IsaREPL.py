@@ -109,6 +109,74 @@ class Client:
         self.cout.flush()
         return Client.__parse_control__(self.unpack.unpack())
 
+    def plugin (self, name, ML):
+        """
+        Isa-REPL allows clients to insert user-specific plugins to collect data
+        directly from Isabelle's internal representations about proof states, lemma
+        context, lemma storage, and any other stuff of Isabelle.
+
+        Argument `name` should uniquely identify the plugin. (We highly recommend the
+            length of the `name` to be short. The name will be printed in the output
+            of every command application, so a long name can consume too much bandwidth.)
+        Arugment `ML` is the source code of the plugin.
+
+        A plugin must be written in Isabelle/ML, a dialect of Standard Meta
+        Language (cf., Isabelle's <implementation> manual, chapter 0 <Isabelle/ML>).
+        Sadly, writing a plugin requires Isabelle development knowledge which is
+        not well documented. Basically, you need to read Isabelle's source code, or
+        pursue helps from some experts like me <xqyww123@gmail.com> :)
+        You could find [some examples](https://github.com/xqyww123/Isa-REPL/tree/main/examples/example_plugin.py).
+
+        A plugin must be a ML value having ML type
+            Toplevel.state -> MessagePackBinIO.Pack.raw_packer option *
+                              Toplevel.state option
+
+        Type `Toplevel.state` represents the entire state of an Isabelle evaluation
+        context. This type is defined in `$ISABELLE_HOME/src/Pure/Isar/toplevel.ML`.
+        The same file also provides useful interfaces to allow you to for example,
+        access the proof state by `Toplevel.proof_of`.
+        ($ISABELLE_HOME is the base directory of your Isabelle installation,
+         you could run `isabelle getenv -b ISABELLE_HOME` to obtain this location).
+
+        Type `MessagePackBinIO.Pack.raw_packer` is defined in [our library](https://github.com/xqyww123/Isa-REPL/blob/main/contrib/mlmsgpack/mlmsgpack.sml?plain=1#L10).
+        It is basically the result of applying a packer to a value that you want to export,
+        e.g., `MessagePackBinIO.Pack.packBool True`.
+
+        So, a plugin is a function accepting the evaluation state and returning optionally
+        two values `(raw_packer, new_state)`.
+
+        `raw_packer` embeds any data you want to export and the way how to encode it into
+        messagepack format. The encoded data will be sent to this Python client, and unpacked
+        automatically using the `msgpack` Python package.
+        Set `raw_packer` to NONE if you have nothing to send to the Python client.
+
+        `new_state` allows you to alter the evaluation state. Set `new_state` to NONE if you
+        do not want to change the state.
+        """
+        if not isinstance(name, str):
+            raise ValueError("the argument name must be a string")
+        if not isinstance(ML, str):
+            raise ValueError("the argument ML must be a string")
+        mp.pack ("\x05plugin", self.cout)
+        mp.pack ([name, ML], self.cout)
+        self.cout.flush()
+        Client.__parse_control__(self.unpack.unpack())
+
+    def unplugin (self, name):
+        """
+        Remove an installed plugin.
+        Argument `name` must be the name passed to the `plugin` method.
+        This interface sliently does nothing if no plugin named `name` is installed.
+        """
+        if not isinstance(name, str):
+            raise ValueError("the argument name must be a string")
+        mp.pack ("\x05unplugin", self.cout)
+        mp.pack (name, self.cout)
+        self.cout.flush()
+        Client.__parse_control__(self.unpack.unpack())
+
+
+
     def boring_parse(data):
         """
         I am boring because I just convert the form of the data representation.
@@ -145,7 +213,8 @@ class Client:
                                     # An integer.
             'state': output[5],     # the proof state as a string (the same content in the `State` pannel)
                                     # A string.
-            'errors': output[6]     # any errors raised during evaluating this single command.
+            'plugin_output': output[6], # the output of plugins
+            'errors': output[7]     # any errors raised during evaluating this single command.
                                     # A list of strings.
             } for output in data[0]]
         return {

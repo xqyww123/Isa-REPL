@@ -8,11 +8,11 @@ functor MessagePack(S : sig
                     end) :> sig
   structure Pack : sig
     type raw_packer = S.outstream -> unit
-    type 'a packer = 'a -> S.outstream -> unit
+    type 'a packer = 'a -> raw_packer
 
-    val doPack : 'a packer -> 'a -> S.outstream -> unit
+    val doPack : 'a packer -> 'a packer
 
-    val fromFn : ('a -> S.outstream -> unit) -> 'a packer
+    val fromFn : 'a packer -> 'a packer
 
     val packList   : 'a packer -> 'a list   packer
     val packVector : 'a packer -> 'a vector packer
