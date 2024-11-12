@@ -12,8 +12,7 @@ type plugins = plugin list
 type flags = {
         is_toplevel: bool,
         is_theory  : bool,
-        is_proof   : bool,
-        is_skipped_proof: bool
+        is_proof   : bool
 }
 type command_output = {
         command_name : string,
@@ -50,6 +49,16 @@ val get_and_clean_message' : Session_ID -> message list
 val get_and_clean_message  : unit -> message list
 
 
+(* State Rollback*)
+
+type state_history = (string * Toplevel.state) list
+val record_state : string -> unit
+val remove_state : string -> unit
+val clean_state : unit -> unit
+val rollback_state : string -> command_output
+val list_states  : unit -> state_history
+val list_states' : unit -> (string (*name*) * command_output) list
+
 (* Tools *)
 
 val trim_makrup : string -> string
@@ -75,8 +84,7 @@ type message = message_type * string
 type flags = {
         is_toplevel: bool,
         is_theory  : bool,
-        is_proof   : bool,
-        is_skipped_proof: bool
+        is_proof   : bool
 }
 
 type collector = Toplevel.state -> (BinIO.StreamIO.outstream -> unit) option *
@@ -156,11 +164,15 @@ val _ = init_printers ()
 
 (*val _ = Multithreading.parallel_proofs := 0 (*TODO: disable me!*)*)
 
+(** State Rollback **)
+
+type state_history = (string * Toplevel.state) list
+
 (** RE **)
 
 type counter = int
 type trace = bool
-val state = Thread_Data.var () : (Toplevel.state * counter * trace) Thread_Data.var
+val state = Thread_Data.var () : (Toplevel.state * counter * trace * state_history) Thread_Data.var
 
 val Pure = Theory.get_pure ()
 val pure_keywords = Thy_Header.get_keywords Pure
@@ -264,12 +276,28 @@ fun parse_text cfg wid state source =
 fun set_trace v =
   case Thread_Data.get state
     of NONE => raise REPL_fail "INTERNAL ERROR: state lost"
-     | SOME (s,c,_) => Thread_Data.put state (SOME (s, c, v))
+     | SOME (s,c,_,H) => Thread_Data.put state (SOME (s, c, v, H))
+
+val trim_err = map (trim_makrup o #2 o #1)
+fun catch_state' wid plugin_output err command s : command_output = {
+        command_name = command,
+        output  = get_and_clean_message' wid,
+        latex   = Toplevel.output_of s,
+        flags   = {
+              is_toplevel = Toplevel.is_toplevel s,
+              is_theory   = Toplevel.is_theory s,
+              is_proof    = Toplevel.is_proof s
+          },
+        level   = Toplevel.level s,
+        state   = trim_makrup (Toplevel.string_of_state s),
+        plugin_output = plugin_output,
+        errors  = trim_err err
+    }
 
 fun RE cfg source : command_outputs =
   case Thread_Data.get state
-    of NONE                => {outputs=NONE, error=SOME "INTERNAL ERROR: state lost"}
-     | SOME (s0,cnt,trace) =>
+    of NONE                  => {outputs=NONE, error=SOME "INTERNAL ERROR: state lost"}
+     | SOME (s0,cnt,trace,H) =>
   case Thread_Data.get Session_ID
     of NONE                => {outputs=NONE, error=SOME "INTERNAL ERROR: worker ID lost"}
      | SOME (wid, plugins) =>
@@ -278,22 +306,8 @@ fun RE cfg source : command_outputs =
       val srcs = Symbol_Pos.explode (source, pos)
               |> split_thy_headers
 
-      val trim_err = map (trim_makrup o #2 o #1)
-      fun catch_state plugin_output err tr s : command_output = {
-              command_name = Toplevel.name_of tr,
-              output  = get_and_clean_message' wid,
-              latex   = Toplevel.output_of s,
-              flags   = {
-                    is_toplevel = Toplevel.is_toplevel s,
-                    is_theory   = Toplevel.is_theory s,
-                    is_proof    = Toplevel.is_proof s,
-                    is_skipped_proof = Toplevel.is_skipped_proof s
-                },
-              level   = Toplevel.level s,
-              state   = trim_makrup (Toplevel.string_of_state s),
-              plugin_output = plugin_output,
-              errors  = trim_err err
-          }
+      fun catch_state plugin_output err tr s : command_output
+        = catch_state' wid plugin_output err (Toplevel.name_of tr) s
 
       fun err_state err tr s : command_output = {
               command_name = Toplevel.name_of tr,
@@ -302,8 +316,7 @@ fun RE cfg source : command_outputs =
               flags   = {
                     is_toplevel = Toplevel.is_toplevel s,
                     is_theory   = Toplevel.is_theory s,
-                    is_proof    = Toplevel.is_proof s,
-                    is_skipped_proof = Toplevel.is_skipped_proof s
+                    is_proof    = Toplevel.is_proof s
                 },
               level   = Toplevel.level s,
               state   = "",
@@ -335,7 +348,7 @@ fun RE cfg source : command_outputs =
 
       val (ret, s') = loop [] [] srcs s0
 
-   in Thread_Data.put state (SOME (s', cnt+1, trace))
+   in Thread_Data.put state (SOME (s', cnt+1, trace, H))
     ; ret
   end
   handle REPL_fail E => {outputs = NONE, error=SOME E}
@@ -344,7 +357,7 @@ fun init_repler id thy =
   let 
    in Thread_Data.put Session_ID (SOME (id, []))
     ; Synchronized.change message_buffer (Inttab.update_new (id, []))
-    ; Thread_Data.put state (SOME (Toplevel.make_state thy, 0, true))
+    ; Thread_Data.put state (SOME (Toplevel.make_state thy, 0, true, []))
   end
 
 
@@ -363,8 +376,8 @@ fun lex_commands cfg source =
     of NONE         => raise REPL_fail "INTERNAL ERROR: worker ID lost"
      | SOME (wid,_) =>
   case Thread_Data.get state
-    of NONE                => raise REPL_fail  "INTERNAL ERROR: state lost"
-     | SOME (s0,cnt,_) =>
+    of NONE              => raise REPL_fail  "INTERNAL ERROR: state lost"
+     | SOME (s0,cnt,_,_) =>
   let val pos = Position.make {
                   line=1, offset=1, end_offset=1, props={label="", file="#REPL", id=string_of_int cnt}}
       fun parse [] = []
@@ -400,5 +413,55 @@ fun delete_plugin name =
      | SOME (wid,plugins) =>
         Thread_Data.put Session_ID (SOME (wid, remove_plugin name plugins))
 
+(** State Rollback II **)
+
+fun record_state name =
+  case Thread_Data.get state
+    of NONE             => raise REPL_fail  "INTERNAL ERROR: state lost"
+     | SOME (s,cnt,t,H) =>
+     Thread_Data.put state (SOME (s, cnt, t, AList.update (op =) (name,s) H))
+
+fun remove_state name =
+  case Thread_Data.get state
+    of NONE             => raise REPL_fail  "INTERNAL ERROR: state lost"
+     | SOME (s,cnt,t,H) =>
+     Thread_Data.put state (SOME (s, cnt, t, AList.delete (op =) name H))
+
+fun clean_state () =
+  case Thread_Data.get state
+    of NONE             => raise REPL_fail  "INTERNAL ERROR: state lost"
+     | SOME (s,cnt,t,_) =>
+     Thread_Data.put state (SOME (s, cnt, t, []))
+
+
+fun rollback_state name =
+  case Thread_Data.get Session_ID
+    of NONE                => raise REPL_fail  "INTERNAL ERROR: state lost"
+     | SOME (wid, plugins) =>
+  case Thread_Data.get state
+    of NONE             => raise REPL_fail  "INTERNAL ERROR: state lost"
+     | SOME (s,cnt,t,H) =>
+     case AList.lookup (op =) H name
+       of NONE => raise REPL_fail ("Historical state " ^ name ^ " is not found.")
+        | SOME s' => let
+       val (plugin_output, _) = run_plugins plugins s'
+    in Thread_Data.put state (SOME (s', cnt, t, H))
+     ; catch_state' wid plugin_output [] "" s'
+   end 
+
+fun list_states () =
+  case Thread_Data.get state
+    of NONE           => raise REPL_fail  "INTERNAL ERROR: state lost"
+     | SOME (_,_,_,H) => H
+
+fun list_states' () =
+  case Thread_Data.get Session_ID
+    of NONE                => raise REPL_fail  "INTERNAL ERROR: state lost"
+     | SOME (wid, plugins) =>
+  case Thread_Data.get state
+    of NONE           => raise REPL_fail  "INTERNAL ERROR: state lost"
+     | SOME (_,_,_,H) => map (apsnd (fn s' =>
+          catch_state' wid (#1 (run_plugins plugins s')) [] "" s'
+       )) H
 
 end

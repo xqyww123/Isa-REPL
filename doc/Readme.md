@@ -8,7 +8,8 @@ Unofficial support for Isabelle's Read-Eval-Print-Loop.
 - Tracing proof state and output panel for each step of evaluation.
 	- Plugin: inserting Isabelle/ML code to collect any data you want directly from Isabelle's internal representations ([example](./examples/example_plugin.py)).
 - Socket based remote communication
-- Concurrency
+- Socket based Concurrency
+- State rollback ([example](./examples/example_rollback.py))
 
 ## Installation
 

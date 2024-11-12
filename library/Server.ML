@@ -176,6 +176,28 @@ fun startup base_dir_of_theories thy0 addr0 =
                                val _ = output packUnit ()
                             in cin''
                            end
+                     | "\005record" => let
+                               val (name, cin'') = doUnpack unpackString cin'
+                               val _ = REPL.record_state name
+                               val _ = output packUnit ()
+                            in cin''
+                           end
+                     | "\005clean_history" => let
+                               val _ = REPL.clean_state ()
+                               val _ = output packUnit ()
+                            in cin'
+                           end
+                     | "\005rollback" => let
+                               val (name, cin'') = doUnpack unpackString cin'
+                               val ret = REPL.rollback_state name
+                               val _ = output REPL_Serialize.command_output_packer ret
+                            in cin''
+                           end
+                     | "\005history" => let
+                               val his = REPL.list_states' ()
+                               val _ = output (packPairList (packString, REPL_Serialize.command_output_packer)) his
+                            in cin'
+                           end
                     end handle REPL.REPL_fail E => (
                            doPack (packPair (packUnit, packString)) ((), E) cout ;
                            cin')

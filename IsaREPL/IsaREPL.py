@@ -176,16 +176,8 @@ class Client:
         Client.__parse_control__(self.unpack.unpack())
 
 
-
-    def boring_parse(data):
-        """
-        I am boring because I just convert the form of the data representation.
-        This conversion just intends to explain the meaning of each data field,
-        and convert the data into an easy-to-understand form.
-        """
-        if data[0] is None:
-            outputs = None
-        else: outputs = [{
+    def parse_output(output):
+        return {
             'command_name': output[0],
             'output': [{        # The same output in Isabelle's output panel.
                                 # A list of messages.
@@ -198,14 +190,13 @@ class Client:
                                 #       which is some warning message.
                 'content': msg[1] # A string, the output
                 } for msg in output[1]],
-            'output': output[2],
+            'latex': output[2],
             'flags': [{                      # some Boolean flags.
                 'is_toplevel': output[3][0], # whether the Isabelle state is outside any theory block
                                              # (the `theory XX imports AA begin ... end` block)
                 'is_theory': output[3][1],   # whether the state is within a theory block and at the
                                              # toplevel of this block
-                'is_proof' : output[3][2],   # whether the state is working on proving some goal
-                'is_skipped_proof': output[3][3] # I dunno :P
+                'is_proof' : output[3][2]    # whether the state is working on proving some goal
                 }],
             'level': output[4],     # The level of nesting context. It is some internal measure
                                     # and doesn't necessarily (but still roughly) reflect the
@@ -216,7 +207,17 @@ class Client:
             'plugin_output': output[6], # the output of plugins
             'errors': output[7]     # any errors raised during evaluating this single command.
                                     # A list of strings.
-            } for output in data[0]]
+            }
+        
+    def boring_parse(data):
+        """
+        I am boring because I just convert the form of the data representation.
+        This conversion just intends to explain the meaning of each data field,
+        and convert the data into an easy-to-understand form.
+        """
+        if data[0] is None:
+            outputs = None
+        else: outputs = [Client.parse_output(output) for output in data[0]]
         return {
         'outputs': outputs, # A sequence of outputs each of which corresponds to one command.
         'error': data[1]    # Either None or a string,
@@ -229,3 +230,56 @@ class Client:
         ret = (self.eval(source))
         return Client.boring_parse(ret)
 
+
+    def record_state (self, name):
+        """
+        Record the current evaluation state so that later you could rollback to
+        this state using name `name`.
+        """
+        if not isinstance(name, str):
+            raise ValueError("the argument name must be a string")
+        mp.pack ("\x05record", self.cout)
+        mp.pack (name, self.cout)
+        self.cout.flush()
+        Client.__parse_control__(self.unpack.unpack())
+
+    def clean_history (self):
+        """
+        Remove all recorded states.
+        """
+        mp.pack ("\x05clean_history", self.cout)
+        self.cout.flush()
+        Client.__parse_control__(self.unpack.unpack())
+
+    def rollback (self, name):
+        """
+        Rollback to a recorded evaluation state named `name`.
+        This method returns a description about the state just restored.
+        This description can be parsed by `Client.parse_output`.
+        However, the `command_name` fielld will be always an empty string,
+        `output` be an empty list, and `latex` be NONE, because no command is executed.
+        """
+        if not isinstance(name, str):
+            raise ValueError("the argument name must be a string")
+        mp.pack ("\x05rollback", self.cout)
+        mp.pack (name, self.cout)
+        self.cout.flush()
+        return Client.__parse_control__(self.unpack.unpack())
+
+    def history (self):
+        """
+        Returns the names of all recorded states
+        This method returns descriptions about all the recorded states.
+        These descriptions can be parsed by `Client.parse_output`.
+        However, the `command_name` fielld will be always an empty string,
+        `output` be an empty list, and `latex` be NONE, because no command is executed.
+        """
+        mp.pack ("\x05history", self.cout)
+        self.cout.flush()
+        return Client.__parse_control__(self.unpack.unpack())
+
+    def silly_rollback (self, name):
+        return Client.parse_output (self.rollback (name))
+
+    def silly_history (self):
+        return {k: Client.parse_output(v) for k,v in self.history().items() }

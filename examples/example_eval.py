@@ -82,33 +82,3 @@ lemma "ONE + ONE = 2"
 end
 """)
 
-#echo_eval ("""theory AA
-#imports Main
-#begin
-#lemma hh: True
-#term "2::nat"
-#"""
-#)
-#
-#echo_eval ("""
-#""")
-#
-#echo_eval ("""
-#    apply simp
-#    done
-#term "1::nat"
-#thm conjI
-#thm hh
-#""")
-#
-#echo_eval ("""
-#definition "ONE = (1::nat)"
-#definition "TWO = (2::nat)"
-#""")
-#
-#echo_eval ("""
-#lemma "ONE + ONE = TWO"
-#    unfolding ONE_def TWO_def
-#    by auto
-#""")
-
