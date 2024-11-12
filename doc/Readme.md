@@ -3,6 +3,7 @@ Isabelle REPL
 
 Unofficial support for Isabelle's Read-Eval-Print-Loop.
 
+**Features**
 - Python Client, easy for Machine Learning.
 - Full support for all Isabelle commands
 - Tracing proof state and output panel for each step of evaluation.
@@ -15,7 +16,9 @@ Unofficial support for Isabelle's Read-Eval-Print-Loop.
 
 Ensuring `<ISABELLE-BASE-DIRECTORY>/bin` is in your `$PATH` environment
 ```
-	isabelle components -u <THE-BASE-DIRECTORY-OF-OUR-PROGRAM>
+git clone git@github.com:xqyww123/Isa-REPL.git
+cd Isa-REPL
+isabelle components -u .
 pip install IsaREPL
 ```
 ## Start up the REPL server
@@ -35,6 +38,10 @@ Every interface of our client is will documented (it is highly recommended to re
 ./examples/example_eval.py 127.0.0.1:6666
 ```
 
+To evaluate a whole theory file
+```
+./examples/eval_file.py 127.0.0.1:6666 $(isabelle getenv -b ISABELLE_HOME)/src/HOL/List.thy
+```
 ## Notes
 
 ### Documents
