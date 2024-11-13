@@ -352,7 +352,7 @@ end = struct
   
     (* alternate *)
     infix 0 ||
-    fun (u1 || u2) ins = u1 ins handle _ => u2 ins
+    fun (u1 || u2) ins = \<^try>\<open>u1 ins catch _  => u2 ins\<close>
 
     (* concatenate *)
     infix 5 --

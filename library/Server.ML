@@ -2,7 +2,7 @@ signature REPL_SEVER = sig
 
 type address = string (*IP address:port*)
 
-val startup : Path.T -> theory option -> address -> Thread.thread
+val startup : Path.T -> theory option -> address -> Isabelle_Thread.T
 val kill_server : address -> unit
 
 end
@@ -89,7 +89,7 @@ fun compile_ML ctxt source =
 
 val session_ID_counter = Counter.make ()
 
-val servers = Synchronized.var "REPL Servers" (Symtab.empty : Thread.thread Symtab.table)
+val servers = Synchronized.var "REPL Servers" (Symtab.empty : Isabelle_Thread.T Symtab.table)
 
 fun startup base_dir_of_theories thy0 addr0 =
   let val _ = if File.is_dir base_dir_of_theories
@@ -121,9 +121,10 @@ fun startup base_dir_of_theories thy0 addr0 =
    in writeln msg
     ; Output.physical_stdout msg
     ; Output.physical_stderr msg
-    ; Isabelle_Thread.fork {name="REPL server " ^ addr0, stack_limit=NONE, interrupts=true} (fn () => (
-      Synchronized.change servers (Symtab.update_new (addr0, Thread.self ()))
-    ; while true do
+    ; Isabelle_Thread.fork (  Isabelle_Thread.params ("REPL server " ^ addr0)
+                           |> Isabelle_Thread.interrupts )  (fn () => (
+      Synchronized.change servers (Symtab.update_new (addr0, Isabelle_Thread.self ()))
+    ; \<^try>\<open> while true do 
       let val (conn,sender) = Socket.accept socket
           val (cin, cout) = make_streams conn
 
@@ -143,7 +144,7 @@ fun startup base_dir_of_theories thy0 addr0 =
             then ()
             else let open MessagePackBinIO.Unpack
                 val (source, cin') = doUnpack unpackString cin
-                val cin' = let open MessagePackBinIO.Pack in (
+                val cin' = let open MessagePackBinIO.Pack in \<^try>\<open> (
                   if String.isPrefix "\005" source
                   then let
                        fun output pack x =
@@ -206,26 +207,26 @@ fun startup base_dir_of_theories thy0 addr0 =
                      in doPack REPL_Serialize.command_outputs_packer ret cout
                       ; cin'
                     end )
-                  handle E => (
+                  catch E => (
                       doPack (packPair (packUnit, packString))
                              ((), REPL.trim_makrup (Runtime.exn_message E)) cout ;
-                      cin')
+                      cin') \<close>
                   end
                 val _ = BinIO.StreamIO.flushOut cout
              in loop cin'
             end
-       in  Isabelle_Thread.fork {name="REPL-worker", stack_limit=NONE, interrupts=true}
+       in  Isabelle_Thread.fork (  Isabelle_Thread.params "REPL-worker"
+                                |> Isabelle_Thread.interrupts )
                                (fn () => ( REPL.init_repler wid thy0
                                          ; loop cin  ))
       end
-      handle E => (
-        Synchronized.change servers (Symtab.delete addr0) ;
-        Exn.reraise E) ))
+      finally
+        Synchronized.change servers (Symtab.delete addr0) \<close> ))
   end
 
 fun kill_server address =
   case Symtab.lookup (Synchronized.value servers) address
-    of SOME thr => Isabelle_Thread.interrupt_unsynchronized thr
+    of SOME thr => Isabelle_Thread.interrupt_thread thr
      | NONE => ()
 
 end
