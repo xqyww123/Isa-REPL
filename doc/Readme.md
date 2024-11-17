@@ -6,18 +6,22 @@ Unofficial support for Isabelle's Read-Eval-Print-Loop.
 **Features**
 - Python Client, easy for Machine Learning.
 - Full support for all Isabelle commands
-- Tracing proof state and output panel for each step of evaluation.
-	- Plugin: inserting Isabelle/ML code to collect any data you want directly from Isabelle's internal representations ([example](./examples/example_plugin.py)).
+- Tracing the proof state and the output panel for each step of evaluation.
+	- Plugin: collecting data from Isabelle's internal representations by plugins written in Isabelle/ML ([example](./examples/example_plugin.py)).
 - Socket based remote communication
 - Socket based Concurrency
 - State rollback ([example](./examples/example_rollback.py))
+- Parsing terms & Retrival of lemmas ([example](./examples/example_parse.py))
 
 ## Installation
 
+We **only** support [Isabelle2023](https://isabelle.in.tum.de/website-Isabelle2023/index.html) and [Isabelle2024](https://isabelle.in.tum.de/website-Isabelle2024/index.html).
+
 Ensuring `<ISABELLE-BASE-DIRECTORY>/bin` is in your `$PATH` environment
 ```
-git clone git@github.com:xqyww123/Isa-REPL.git
+git clone https://github.com/xqyww123/Isa-REPL.git
 cd Isa-REPL
+git checkout $(isabelle version) # Error can raise if you are using an unsupported version of Isabelle
 isabelle components -u .
 pip install IsaREPL
 ```

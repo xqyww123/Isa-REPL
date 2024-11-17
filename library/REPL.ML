@@ -59,6 +59,11 @@ val rollback_state : string -> command_output
 val list_states  : unit -> state_history
 val list_states' : unit -> (string (*name*) * command_output) list
 
+(* Parse *)
+
+val parse_term    : string -> Proof.context * term
+val retrieve_fact : string -> Proof.context * thm list
+
 (* Tools *)
 
 val trim_makrup : string -> string
@@ -463,5 +468,34 @@ fun list_states' () =
      | SOME (_,_,_,H) => map (apsnd (fn s' =>
           catch_state' wid (#1 (run_plugins plugins s')) [] "" s'
        )) H
+
+(** Parser **)
+
+fun parse_term term =
+  case Thread_Data.get state
+    of NONE           => raise REPL_fail  "INTERNAL ERROR: state lost"
+     | SOME (s,_,_,_) => (
+  case try Toplevel.context_of s
+    of SOME ctxt => (ctxt, Syntax.read_term ctxt term)
+     | NONE     => raise REPL_fail "Not in a theory context.\n\
+            \You must evaluate at least a theory head (e.g., 'theory THY imports Main begin') to \
+            \indicate the theory under which the term will be parsed." )
+
+fun retrieve_fact name =
+  case Thread_Data.get state
+    of NONE           => raise REPL_fail  "INTERNAL ERROR: state lost"
+     | SOME (s,_,_,_) => (
+  case try Toplevel.context_of s
+    of SOME ctxt =>
+      let val keywords = Thy_Header.get_keywords (Proof_Context.theory_of ctxt)
+          val thms = Parse.read_embedded ctxt keywords Parse.thms1 (Input.string name)
+                  |> Attrib.eval_thms ctxt
+       in (ctxt, thms)
+      end
+     | NONE     => raise REPL_fail "Not in a theory context.\n\
+            \You must evaluate at least a theory head (e.g., 'theory THY imports Main begin') to \
+            \indicate the theory under which the term will be parsed." )
+
+
 
 end
