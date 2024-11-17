@@ -33,9 +33,11 @@ theory THY
 imports Main
 begin
 """)
-print(1)
 
+print(""">>> c.fact("conj_assoc[symmetric] HOL.simp_thms")""")
 pp (c.fact("conj_assoc[symmetric] HOL.simp_thms"))
+
+print(""">>> c.sexpr_term("(2::nat)")""")
 pp (c.sexpr_term("(2::nat)"))
 
 c.eval ("""
@@ -43,7 +45,10 @@ lemma t1: "(1::nat) + 1 = 2" by auto
 thm t1
 """)
 
+print(""">>> c.fact("t1[symmetric]")""")
 pp (c.fact("t1[symmetric]"))
+print(""">>> c.sexpr_fact("t1[symmetric]")""")
+pp (c.sexpr_fact("t1[symmetric]"))
 
 c.close ()
 

@@ -11,6 +11,7 @@ Unofficial support for Isabelle's Read-Eval-Print-Loop.
 - Socket based remote communication
 - Socket based Concurrency
 - State rollback ([example](./examples/example_rollback.py))
+- Parsing terms & Retrival of lemmas ([example](./examples/example_parse.py))
 
 ## Installation
 

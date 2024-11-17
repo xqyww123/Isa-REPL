@@ -208,13 +208,15 @@ fun startup base_dir_of_theories thy0 addr0 =
                      | "\005fact" => let
                                val (str, cin'') = doUnpack unpackString cin'
                                val (ctxt, thms) = REPL.retrieve_fact str
-                               val _ = output (packList packString) (map (Syntax.string_of_term ctxt o Thm.prop_of) thms)
+                               val _ = output (packList packString)
+                                          (map (REPL.trim_makrup o Syntax.string_of_term ctxt o Thm.prop_of) thms)
                             in cin''
                            end
                      | "\005sexpr_fact" => let
                                val (str, cin'') = doUnpack unpackString cin'
                                val (_, thms) = REPL.retrieve_fact str
-                               val _ = output (packList packString) (map (REPL_Serialize.s_expression o Thm.prop_of) thms)
+                               val _ = output (packList packString)
+                                          (map (REPL_Serialize.s_expression o Thm.prop_of) thms)
                             in cin''
                            end
                     end handle REPL.REPL_fail E => (
@@ -233,10 +235,10 @@ fun startup base_dir_of_theories thy0 addr0 =
                 val _ = BinIO.StreamIO.flushOut cout
              in loop cin'
             end
-       in  Isabelle_Thread.fork (  Isabelle_Thread.params "REPL-worker"
+       in Isabelle_Thread.fork (  Isabelle_Thread.params "REPL-worker"
                                 |> Isabelle_Thread.interrupts )
                                (fn () => ( REPL.init_repler wid thy0
-                                         ; loop cin  ))
+                                         ; loop cin ))
       end
       finally
         Synchronized.change servers (Symtab.delete addr0) \<close> ))

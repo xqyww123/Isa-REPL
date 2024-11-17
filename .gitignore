@@ -12,3 +12,5 @@
 __pycache__
 doc/.obsidian
 
+dist
+IsaREPL.egg-info
