@@ -199,6 +199,24 @@ fun startup base_dir_of_theories thy0 addr0 =
                                val _ = output (packPairList (packString, REPL_Serialize.command_output_packer)) his
                             in cin'
                            end
+                     | "\005sexpr_term" => let
+                               val (str, cin'') = doUnpack unpackString cin'
+                               val (_, term) = REPL.parse_term str
+                               val _ = output REPL_Serialize.s_expression_packer term
+                            in cin''
+                           end
+                     | "\005fact" => let
+                               val (str, cin'') = doUnpack unpackString cin'
+                               val (ctxt, thms) = REPL.retrieve_fact str
+                               val _ = output (packList packString) (map (Syntax.string_of_term ctxt o Thm.prop_of) thms)
+                            in cin''
+                           end
+                     | "\005sexpr_fact" => let
+                               val (str, cin'') = doUnpack unpackString cin'
+                               val (_, thms) = REPL.retrieve_fact str
+                               val _ = output (packList packString) (map (REPL_Serialize.s_expression o Thm.prop_of) thms)
+                            in cin''
+                           end
                     end handle REPL.REPL_fail E => (
                            doPack (packPair (packUnit, packString)) ((), E) cout ;
                            cin')

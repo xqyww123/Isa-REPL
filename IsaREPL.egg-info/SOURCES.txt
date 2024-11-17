@@ -1,0 +1,12 @@
+COPYING.LESSER.txt
+COPYING.txt
+LICENSE
+README.md
+pyproject.toml
+IsaREPL/IsaREPL.py
+IsaREPL/__init__.py
+IsaREPL.egg-info/PKG-INFO
+IsaREPL.egg-info/SOURCES.txt
+IsaREPL.egg-info/dependency_links.txt
+IsaREPL.egg-info/requires.txt
+IsaREPL.egg-info/top_level.txt
