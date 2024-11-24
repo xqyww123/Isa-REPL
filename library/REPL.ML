@@ -508,8 +508,9 @@ fun sledgehammer timeout' =
        let val timeout = Time.fromSeconds timeout'
         in (if timeout' <= 0 then I else Timeout.apply_physical timeout) (fn () => let
            val ctxt = Proof.context_of stat
-                   |> Config.map REPL_Sledgehammer_Solver.sledgehammer_params
-                                 (fn s => "timeout = " ^ string_of_int timeout' ^ ", " ^ s)
+                   |> (if timeout' <= 0 then I 
+                       else Config.map REPL_Sledgehammer_Solver.sledgehammer_params
+                                 (fn s => "timeout = " ^ string_of_int timeout' ^ ", " ^ s))
            val goal = Proof.goal stat |> #goal
            val (prf, _) = REPL_Sledgehammer_Solver.search_proof ctxt goal
         in prf
