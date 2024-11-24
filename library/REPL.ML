@@ -66,7 +66,8 @@ val retrieve_fact : string -> Proof.context * thm list
 
 (* Tools *)
 
-val trim_makrup : string -> string
+val trim_makrup  : string -> string
+val sledgehammer : int (*timeout in seconds*) -> string
 
 end
 
@@ -496,6 +497,25 @@ fun retrieve_fact name =
             \You must evaluate at least a theory head (e.g., 'theory THY imports Main begin') to \
             \indicate the theory under which the term will be parsed." )
 
+(** Sledgehammer **)
+
+fun sledgehammer timeout' =
+  case Thread_Data.get state
+    of NONE           => raise REPL_fail  "INTERNAL ERROR: state lost"
+     | SOME (s,_,_,_) => (
+  case try Toplevel.proof_of s
+    of SOME stat =>
+       let val timeout = Time.fromSeconds timeout'
+        in (if timeout' <= 0 then I else Timeout.apply_physical timeout) (fn () => let
+           val ctxt = Proof.context_of stat
+                   |> Config.map REPL_Sledgehammer_Solver.sledgehammer_params
+                                 (fn s => "timeout = " ^ string_of_int timeout' ^ ", " ^ s)
+           val goal = Proof.goal stat |> #goal
+           val (prf, _) = REPL_Sledgehammer_Solver.search_proof ctxt goal
+        in prf
+       end) ()
+       end
+     | NONE      => raise REPL_fail "Not in a proof context." )
 
 
 end

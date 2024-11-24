@@ -218,6 +218,12 @@ fun startup base_dir_of_theories thy0 addr0 =
                                           (map (REPL_Serialize.s_expression o Thm.prop_of) thms)
                             in cin''
                            end
+                     | "\005hammer" => let
+                               val (timeout, cin'') = doUnpack unpackInt cin'
+                               val proof = REPL.sledgehammer timeout
+                               val _ = output packString proof
+                            in cin''
+                           end
                     end handle REPL.REPL_fail E => (
                            doPack (packPair (packUnit, packString)) ((), E) cout ;
                            cin')
@@ -234,13 +240,13 @@ fun startup base_dir_of_theories thy0 addr0 =
                 val _ = BinIO.StreamIO.flushOut cout
              in loop cin'
             end
-       in  Isabelle_Thread.fork {name="REPL-worker", stack_limit=NONE, interrupts=true}
+       in Isabelle_Thread.fork {name="REPL-worker", stack_limit=NONE, interrupts=true}
                                (fn () => ( REPL.init_repler wid thy0
-                                         ; loop cin  ))
+                                         ; loop cin ))
       end
       handle E => (
         Synchronized.change servers (Symtab.delete addr0) ;
-        Exn.reraise E) ))
+        Exn.reraise E)  ))
   end
 
 fun kill_server address =

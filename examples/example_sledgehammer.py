@@ -40,11 +40,25 @@ def echo_eval (src):
 
 echo_eval("""
 theory HHH
-  imports Main "Auto_Sledgehammer.Auto_Sledgehammer"
+  imports Main 
 begin
 definition "ONE = (1::nat)"
-lemma "ONE + ONE = 2"
-    by auto_sledgehammer (*HERE, we are calling Sledgehammer!*)
-end
 """)
+
+#print("There are two ways to call Sledgehammer")
+#print("One is throughout `auto_sledgehammer`, which is fully transparent")
+#echo_eval("""
+#lemma "ONE + ONE = 2"
+#    by auto_sledgehammer (*HERE, we are calling Sledgehammer!*)
+#""")
+
+print("Another way is to use REPL's `hammer` interface, which won't change the REPL state but will return the obtained tactic script.")
+echo_eval("""
+lemma "ONE + ONE = 2"
+""")
+
+proof = c.hammer(0) # with a timeout of 60 seconds
+print("Sledgehammer returns: " + proof)
+echo_eval("by (" + proof + ")")
+echo_eval("end")
 
