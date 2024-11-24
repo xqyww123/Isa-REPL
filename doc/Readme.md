@@ -12,6 +12,7 @@ Unofficial support for Isabelle's Read-Eval-Print-Loop.
 - Socket based Concurrency
 - State rollback ([example](./examples/example_rollback.py))
 - Parsing terms & Retrival of lemmas ([example](./examples/example_parse.py))
+- Sledgehammer ([example](./examples/example_sledgehammer.py))
 
 ## Installation
 
