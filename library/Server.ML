@@ -219,6 +219,12 @@ fun startup base_dir_of_theories thy0 addr0 =
                                           (map (REPL_Serialize.s_expression o Thm.prop_of) thms)
                             in cin''
                            end
+                     | "\005hammer" => let
+                               val (timeout, cin'') = doUnpack unpackInt cin'
+                               val proof = REPL.sledgehammer timeout
+                               val _ = output packString proof
+                            in cin''
+                           end
                     end handle REPL.REPL_fail E => (
                            doPack (packPair (packUnit, packString)) ((), E) cout ;
                            cin')

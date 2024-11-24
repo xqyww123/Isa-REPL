@@ -284,7 +284,6 @@ class Client:
     def silly_history (self):
         return {k: Client.parse_output(v) for k,v in self.history().items() }
 
-
     def sexpr_term (self, term):
         """
         Parse a term and translate it into S-expression that reveals the full names
@@ -325,4 +324,34 @@ class Client:
         mp.pack (names, self.cout)
         self.cout.flush()
         return Client.__parse_control__ (self.unpack.unpack())
+
+    def hammer (self, timeout):
+        """
+        Invoke Isabelle Sledgehammer within an indicated timeout (in seconds, and 0 means no timeout).
+        Returns obtained tactic scripts if succeeds; or raises REPLFail on failure.
+        The returned tactic `tac` is a string ready to be invoked by `apply (tac)`.
+        Regardless if the hammer success, the REPL state will not be changed.
+        You must manually evaluate `apply (tac)` to apply the obtained tactics.
+
+        You could evaluate `declare [[REPL_sledgehammer_params = "ANY SLEDGEHAMMER PARAMETERS HERE"]]`
+        to configure any Sledgehammer settings to be used in this interface.
+        The configure takes the same syntax as indicated in the Sledgehammer reference (as attached
+        to the Isabelle software package).
+        Example: `declare [[REPL_sledgehammer_params = "provers = \\"cvc4 e spass vampire\\", minimize = false, max_proofs = 10"]]`
+        Note: use *SINGLE* backslash in the code to be evaluated.
+
+        This sledgehammer process is smart and will only return the first encountered successful proofs.
+        It pre-play every reported proof to test if it could be finish within a time limit. If not,
+        it will not considered as a successful proof and be discarded; otherwise, the proof is returned
+        immediately killing all other parallel attempts.
+        This pre-play time limit is configurable by evaluating
+        `delcare [[REPL_sledgehammer_preplay_timeout = <ANY SECONDS>]]`
+        e.g, `delcare [[REPL_sledgehammer_preplay_timeout = 6]]`
+        """
+        if not isinstance(timeout, int):
+            raise ValueError("the argument name must be an integer")
+        mp.pack ("\x05hammer", self.cout)
+        mp.pack (timeout, self.cout)
+        self.cout.flush()
+        return Client.__parse_control__(self.unpack.unpack())
 

@@ -93,7 +93,6 @@ and out_args ret bvs args = fold_rev (fn x => fn ret => (" " :: s_expr ret bvs x
 fun s_expression term = String.concat (s_expr [] [] term)
 val s_expression_packer = packString o s_expression
 
-
 end
 
 end
