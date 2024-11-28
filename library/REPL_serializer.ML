@@ -9,6 +9,8 @@ val command_outputs_packer: REPL.command_outputs MessagePackBinIO.Pack.packer
 val term_string : Context.generic -> term MessagePackBinIO.Pack.packer
 val s_expression : term -> string
 val s_expression_packer : term MessagePackBinIO.Pack.packer
+val pack_context : bool -> Context.generic -> REPL.context MessagePackBinIO.Pack.packer
+val s_expr_typ : typ -> string list -> string list
 
 end
 
@@ -68,32 +70,83 @@ fun command_outputs_packer {
     (   outputs: command_output list option,
         error : string option     )
 
+
+fun string_of_var (s,i) =
+      if i = ~1 then s
+      else if size(s) = 0 orelse Char.isDigit (String.sub (s, size(s)-1))
+      then "?" ^ s ^ "." ^ string_of_int i
+      else "?" ^ s  ^ string_of_int i
+
+val pack_var = packString o string_of_var
+
 fun term_string ctxt =
   packString o REPL.trim_makrup o Context.cases Syntax.string_of_term_global Syntax.string_of_term ctxt
 
+fun s_expr_typ (TFree (name, sort)) ret = "(var " :: name :: fold_rev (fn C => fn L => " "::C::L) sort (")"::ret)
+  | s_expr_typ (TVar  (name, sort)) ret = "(var " :: string_of_var name :: fold_rev (fn C => fn L => " "::C::L) sort (")"::ret)
+  | s_expr_typ (Type  (name, typs)) ret =
+      if null typs
+      then name::ret
+      else "(" :: name :: fold_rev (fn T => fn L => " " :: s_expr_typ T L) typs (")"::ret)
 
-
-fun s_expr ret bvs term =
+fun s_expr ret bvs ctxt term =
   let val (head, args) = Term.strip_comb term
       val ret = if null args then ret else ")" :: ret
    in (
     case head
-      of Const (name,_) => (name :: out_args ret bvs args)
-       | Free (name, _) => (name :: out_args ret bvs args)
-       | Var ((name,_), _) => (name :: out_args ret bvs args)
-       | Abs (triple as (name,_,body)) =>
-          if null args then ("(\<lambda> " :: name :: " " :: s_expr (")"::ret) (name::bvs) body)
-                       else (s_expr ret bvs (Abs triple) @ out_args ret bvs args)
-       | Bound i => (nth bvs i :: out_args ret bvs args)
+      of Const (name, ty) => (name :: " " :: s_expr_typ ty (out_args ret bvs ctxt args))
+       | Free (name, ty) => ("var " :: name :: s_expr_typ ty (out_args ret bvs ctxt args))
+       | Var (name, ty) => ("var " :: string_of_var name :: s_expr_typ ty (out_args ret bvs ctxt args))
+       | Abs (triple as (name, ty,body)) =>
+          if null args
+          then let val (name',ctxt') = Name.variant name ctxt
+                in ("(\<lambda> " :: name :: " " :: s_expr_typ ty (" " :: s_expr (")"::ret) (name'::bvs) ctxt' body))
+               end
+          else s_expr (out_args ret bvs ctxt args) bvs ctxt (Abs triple)
+       | Bound i => (nth bvs i :: " " :: out_args ret bvs ctxt args)
        | _ $ _ => error "impossible")
    |> (fn L => if null args then L else "(" :: L)
   end
-and out_args ret bvs args = fold_rev (fn x => fn ret => (" " :: s_expr ret bvs x)) args ret
+and out_args ret bvs ctxt args = fold_rev (fn x => fn ret => (" " :: s_expr ret bvs ctxt x)) args ret
 
-fun s_expression term = String.concat (s_expr [] [] term)
+fun s_expression term = String.concat (s_expr [] [] Name.context term)
 val s_expression_packer = packString o s_expression
 
 
+fun term_packer s_expr ctxt =
+      if s_expr then s_expression_packer else term_string ctxt
+fun pretty_typ ctxt =
+      packString o REPL.trim_makrup o Context.cases Syntax.string_of_typ_global Syntax.string_of_typ ctxt
+fun typ_packer s_expr ctxt typ =
+      if s_expr
+      then packString (String.concat (s_expr_typ typ []))
+      else pretty_typ ctxt typ
+fun thm_packer s_expr ctxt = term_packer s_expr ctxt o Thm.prop_of
+
+
+
+fun pack_context s_expr ctxt ({
+  local_facts: (string * thm list) list,
+  assumptions: thm list,
+  bindings   : (typ * term) Vartab.table (*bindings introduced by `let ?x = <...>`*),
+  fixed_terms: typ Vartab.table * sort Vartab.table,
+  goals      : cterm list
+} : context) =
+  let val thm = thm_packer s_expr ctxt
+      val typ = typ_packer s_expr ctxt
+      val term= term_packer s_expr ctxt
+   in packTuple5 (
+        packPairList (packString, packList thm),
+        packList thm,
+        packPairList (pack_var, packPair (typ, term)) o Vartab.dest,
+        packPair (packPairList (pack_var, typ) o Vartab.dest, packPairList (pack_var, packList packString) o Vartab.dest),
+        packList (term o Thm.term_of))
+      ( local_facts: (string * thm list) list,
+        assumptions: thm list,
+        bindings   : (typ * term) Vartab.table (*bindings introduced by `let ?x = <...>`*),
+        fixed_terms: typ Vartab.table * sort Vartab.table,
+        goals      : cterm list)
+  end
 
 end
 

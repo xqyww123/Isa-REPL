@@ -13,6 +13,7 @@ Unofficial support for Isabelle's Read-Eval-Print-Loop.
 - State rollback ([example](./examples/example_rollback.py))
 - Parsing terms & Retrival of lemmas ([example](./examples/example_parse.py))
 - Sledgehammer ([example](./examples/example_sledgehammer.py))
+- Retrivial of contextual information including assumptions, local facts, fixed terms, fixed types, and goals, in either the pretty-printed form or S expression ([example](./examples/example_context.py)).
 
 ## Installation
 
