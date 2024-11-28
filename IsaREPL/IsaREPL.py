@@ -355,3 +355,29 @@ class Client:
         self.cout.flush()
         return Client.__parse_control__(self.unpack.unpack())
 
+    def context (self, s_expr):
+        """
+        Returns helpful contextual data including
+            local facts, assumptions, bindings (made by `let` command), fixed term variables (and their types),
+            fixed type variables (and their sorts), and goals.
+        This retrival doesn't change the state of REPL.
+        """
+        if not isinstance(s_expr, bool):
+            raise ValueError("the argument s_expr must be a boolean")
+        mp.pack ("\x05context", self.cout)
+        mp.pack (s_expr, self.cout)
+        self.cout.flush ()
+        return Client.__parse_control__(self.unpack.unpack())
+
+    def parse_ctxt (raw):
+        return {
+            'local_facts': raw[0],
+            'assumptions': raw[1],
+            'bindings'   : raw[2], # {name => (typ, term)}
+            'fixed_terms': raw[3][0],
+            'fixed_types': raw[3][1],
+            'goals'      : raw[4]
+        }
+
+    def silly_context (self, s_expr):
+        return Client.parse_ctxt(self.context(s_expr))

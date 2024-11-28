@@ -225,6 +225,13 @@ fun startup base_dir_of_theories thy0 addr0 =
                                val _ = output packString proof
                             in cin''
                            end
+                     | "\005context" => let
+                               val (s_expr, cin'') = doUnpack unpackBool cin'
+                               val ctxt = REPL.get_ctxt ()
+                               val state = REPL.get_context ()
+                               val _ = output (REPL_Serialize.pack_context s_expr (Context.Proof ctxt)) state
+                            in cin''
+                           end
                     end handle REPL.REPL_fail E => (
                            doPack (packPair (packUnit, packString)) ((), E) cout ;
                            cin')

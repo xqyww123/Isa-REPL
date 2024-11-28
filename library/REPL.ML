@@ -69,6 +69,19 @@ val retrieve_fact : string -> Proof.context * thm list
 val trim_makrup  : string -> string
 val sledgehammer : int (*timeout in seconds*) -> string
 
+(* Proof Context *)
+
+type context = {
+  local_facts: (string * thm list) list,
+  assumptions: thm list,
+  bindings   : (typ * term) Vartab.table (*bindings introduced by `let ?x = <...>`*),
+  fixed_terms: typ Vartab.table * sort Vartab.table,
+  goals      : cterm list
+}
+
+val get_context : unit -> context
+val get_ctxt : unit -> Proof.context
+
 end
 
 structure REPL : REPL = struct
@@ -526,5 +539,49 @@ fun sledgehammer timeout' =
        end) ()
        end
      | NONE      => raise REPL_fail "Not in a proof context." )
+
+(** get context **)
+
+type context = {
+  local_facts: (string * thm list) list,
+  assumptions: thm list,
+  bindings   : (typ * term) Vartab.table (*bindings introduced by `let ?x = <...>`*),
+  fixed_terms: typ Vartab.table * sort Vartab.table,
+  goals      : cterm list
+}
+
+fun get_context () =
+  case Thread_Data.get state
+    of NONE           => raise REPL_fail  "INTERNAL ERROR: state lost"
+     | SOME (s,_,_,_) => (
+  case (try Toplevel.context_of s, try Toplevel.proof_of s)
+    of (SOME ctxt, prfstate) =>
+      let
+        val thy = Proof_Context.theory_of ctxt
+
+        val facts = Proof_Context.facts_of ctxt
+        val props = map #1 (Facts.props facts)
+        val local_facts =
+          (if null props then [] else [("<unnamed>", props)]) @
+          Facts.dest_static false [Global_Theory.facts_of thy] facts
+
+        val assms = Assumption.all_prems_of ctxt
+
+       in {local_facts = local_facts,
+           assumptions = assms,
+           bindings = Variable.binds_of ctxt,
+           fixed_terms = Variable.constraints_of ctxt,
+           goals = (case prfstate of NONE => []
+                       | SOME s => Thm.cprems_of (#goal (Proof.goal s)) )}
+      end
+     | (NONE, _) => raise REPL_fail "Not in a proof context." )
+
+fun get_ctxt () =
+  case Thread_Data.get state
+    of NONE           => raise REPL_fail  "INTERNAL ERROR: state lost"
+     | SOME (s,_,_,_) => (
+  case try Toplevel.context_of s
+    of SOME ctxt => ctxt
+     | NONE => raise REPL_fail "Not in a proof context." )
 
 end
