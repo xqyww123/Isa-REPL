@@ -91,12 +91,13 @@ fun s_expr_typ (TFree (name, sort)) ret = "(var " :: name :: fold_rev (fn C => f
 
 fun s_expr ret bvs ctxt term =
   let val (head, args) = Term.strip_comb term
-      val ret = if null args then ret else ")" :: ret
+      val nopara = null args andalso (case head of Bound _ => true | _ => false)
+      val ret = if nopara then ret else ")" :: ret
    in (
     case head
       of Const (name, ty) => (name :: " " :: s_expr_typ ty (out_args ret bvs ctxt args))
-       | Free (name, ty) => ("var " :: name :: s_expr_typ ty (out_args ret bvs ctxt args))
-       | Var (name, ty) => ("var " :: string_of_var name :: s_expr_typ ty (out_args ret bvs ctxt args))
+       | Free (name, ty) => ("var " :: name :: " " :: s_expr_typ ty (out_args ret bvs ctxt args))
+       | Var (name, ty) => ("var " :: string_of_var name :: " " :: s_expr_typ ty (out_args ret bvs ctxt args))
        | Abs (triple as (name, ty,body)) =>
           if null args
           then let val (name',ctxt') = Name.variant name ctxt
@@ -105,7 +106,7 @@ fun s_expr ret bvs ctxt term =
           else s_expr (out_args ret bvs ctxt args) bvs ctxt (Abs triple)
        | Bound i => (nth bvs i :: " " :: out_args ret bvs ctxt args)
        | _ $ _ => error "impossible")
-   |> (fn L => if null args then L else "(" :: L)
+   |> (fn L => if nopara then L else "(" :: L)
   end
 and out_args ret bvs ctxt args = fold_rev (fn x => fn ret => (" " :: s_expr ret bvs ctxt x)) args ret
 

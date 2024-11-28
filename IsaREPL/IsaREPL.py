@@ -361,6 +361,8 @@ class Client:
             local facts, assumptions, bindings (made by `let` command), fixed term variables (and their types),
             fixed type variables (and their sorts), and goals.
         This retrival doesn't change the state of REPL.
+
+        The formatter of S expression is given in ../library/REPL_serializer.ML:s_expr.
         """
         if not isinstance(s_expr, bool):
             raise ValueError("the argument s_expr must be a boolean")
