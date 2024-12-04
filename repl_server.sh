@@ -100,7 +100,7 @@ session REPL$$ = "$(printf '%b' $BASE_SESSION)"
 EOF
 
 echo isabelle build -D $DIR $options REPL$$
-isabelle build -D $DIR $options REPL$$
+REPL_DEFAULT_SESSION="$(printf '%b' $BASE_SESSION)" isabelle build -D $DIR $options REPL$$
 
 #rm $DIR -r
 
