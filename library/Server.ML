@@ -98,6 +98,8 @@ fun startup base_dir_of_theories thy0 addr0 =
               then error ("The base_dir_of_theories must be a directory : " ^ File.standard_path base_dir_of_theories)
               else OS.FileSys.mkDir (File.standard_path base_dir_of_theories)
 
+      val default_session = getenv "REPL_DEFAULT_SESSION"
+
       val ctxt = case thy0 of SOME some => Context.Theory some
                             | NONE => Context.the_generic_context ()
 
@@ -136,6 +138,9 @@ fun startup base_dir_of_theories thy0 addr0 =
 
           val (thy_qualifier, cin) = MessagePackBinIO.Unpack.doUnpack
                                           (MessagePackBinIO.Unpack.unpackString) cin
+          val thy_qualifier = if thy_qualifier = ""
+                              then default_session
+                              else thy_qualifier
           val cfg = {base_dir=base_dir, thy_qualifier=thy_qualifier}
 
           fun loop cin =

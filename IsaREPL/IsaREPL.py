@@ -7,15 +7,15 @@ class Client:
     """
     A client for connecting Isabelle REPL
     """
-    def __init__(self, addr, thy_qualifier="HOL"):
+    def __init__(self, addr, thy_qualifier=""):
         """
-        Create a client and connect to `addr`.
+        Create a client and connect it to `addr`.
 
         If the script to be evaluated contains theory headers like
-            `theory AAA imports A B C begin ... end`
+            `theory AAA imports List begin ... end`
         arguement `thy_qualifier` indicates the default session under which
-        we should look for an import target (e.g. A) if it is not fully qualified,
-        e.g. "List" instead of "HOL.List".
+        we should look for a local theory (e.g. List) if it is not fully qualified ("HOL.List").
+        Default: the base session as indicated in the ./repl_server.sh
         """
         if not isinstance(thy_qualifier, str):
             raise ValueError("the argument thy_qualifier must be a string")
