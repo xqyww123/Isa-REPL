@@ -137,10 +137,18 @@ fun startup base_dir_of_theories thy0 addr0 =
                   else ( if File.exists base_dir then File.rm base_dir else ();
                          OS.FileSys.mkDir (File.platform_path base_dir) )
 
+          val (version, cin) = MessagePackBinIO.Unpack.doUnpack
+                                          (MessagePackBinIO.Unpack.unpackString) cin
+          val _ = if version = "0.7.0" then ()
+                  else error "The server is connected with a wrong version of the client.\n\
+                             \Please run `pip install \"IsaREPL==0.7.0\" --force-reinstall` to update your client."
+
           val (thy_qualifier, cin) = MessagePackBinIO.Unpack.doUnpack
                                           (MessagePackBinIO.Unpack.unpackString) cin
           val thy_qualifier = if thy_qualifier = ""
-                              then default_session
+                              then if default_session = "Main"
+                                   then "HOL"
+                                   else default_session
                               else thy_qualifier
           val cfg = {base_dir=base_dir, thy_qualifier=thy_qualifier}
 

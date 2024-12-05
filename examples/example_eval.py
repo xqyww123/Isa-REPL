@@ -18,7 +18,7 @@ if len(sys.argv) != 2:
 
 addr = sys.argv[1]
 
-c = Client(addr)
+c = Client(addr, thy_qualifier="HOL")
 
 def echo_eval (src):
     print('>>> '.join(src.splitlines(True)))

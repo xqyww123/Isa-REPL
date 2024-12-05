@@ -7,6 +7,8 @@ class Client:
     """
     A client for connecting Isabelle REPL
     """
+
+    VERSION = '0.7.0'
     def __init__(self, addr, thy_qualifier=""):
         """
         Create a client and connect it to `addr`.
@@ -31,6 +33,7 @@ class Client:
         self.cin   = self.sock.makefile('rb', buffering=0)
         self.unpack= mp.Unpacker(self.cin)
 
+        mp.pack(Client.VERSION, self.cout)
         mp.pack(thy_qualifier, self.cout)
         self.cout.flush()
 
@@ -383,3 +386,44 @@ class Client:
 
     def silly_context (self, s_expr):
         return Client.parse_ctxt(self.context(s_expr))
+
+    def sexpr_term (self, term):
+        """
+        Parse a term and translate it into S-expression that reveals the full names
+        of all overloaded notations.
+        This interface can be called only under certain theory context, meaning you
+        must have evaluated certain code like `theory THY imports Main begin` using
+        the `eval` interface.
+        """
+        if not isinstance(term, str):
+            raise ValueError("the argument term must be a string")
+        mp.pack ("\x05sexpr_term", self.cout)
+        mp.pack (term, self.cout)
+        self.cout.flush()
+        return Client.__parse_control__ (self.unpack.unpack())
+
+    def fact (self, names):
+        """
+        Retreive a fact like a lemma, a theorem, or a corollary.
+        The argument `names` has the same syntax with the argument of Isabelle command `thm`.
+        Attributes are allowed, e.g., `HOL.simp_thms(1)[symmetric]`
+        Names must be separated by space, e.g., `HOL.simp_thms conj_cong[symmetric] conjI`
+        A list of pretty-printed string of the facts will be returned in the same order of the names.
+        """
+        if not isinstance(names, str):
+            raise ValueError("the argument term must be a string")
+        mp.pack ("\x05fact", self.cout)
+        mp.pack (names, self.cout)
+        self.cout.flush()
+        return Client.__parse_control__ (self.unpack.unpack())
+
+    def sexpr_fact (self, names):
+        """
+        Similar with `fact` but returns the S-expressions of the terms of the facts.
+        """
+        if not isinstance(names, str):
+            raise ValueError("the argument term must be a string")
+        mp.pack ("\x05sexpr_fact", self.cout)
+        mp.pack (names, self.cout)
+        self.cout.flush()
+        return Client.__parse_control__ (self.unpack.unpack())
