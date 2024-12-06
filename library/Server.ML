@@ -149,7 +149,7 @@ fun startup base_dir_of_theories thy0 addr0 =
                                    then "HOL"
                                    else default_session
                               else thy_qualifier
-          val cfg = {base_dir=base_dir, thy_qualifier=thy_qualifier}
+          val cfg = Unsynchronized.ref {base_dir=base_dir, thy_qualifier=thy_qualifier}
 
           fun loop cin =
             if BinIO.StreamIO.endOfStream cin
@@ -172,7 +172,7 @@ fun startup base_dir_of_theories thy0 addr0 =
                           cin')
                      | "\005lex" => let
                                val (src, cin'') = doUnpack unpackString cin'
-                               val rets = REPL.lex_commands cfg src
+                               val rets = REPL.lex_commands (!cfg) src
                                val _ = output (packList packString) rets
                             in cin''
                            end
@@ -244,11 +244,17 @@ fun startup base_dir_of_theories thy0 addr0 =
                                val _ = output (REPL_Serialize.pack_context s_expr (Context.Proof ctxt)) state
                             in cin''
                            end
+                     | "\005quanlifier" => let
+                               val (qualifier, cin'') = doUnpack unpackString cin'
+                               val {base_dir, ...} = !cfg
+                               val _ = cfg := {base_dir=base_dir, thy_qualifier=qualifier}
+                            in cin''
+                           end
                     end handle REPL.REPL_fail E => (
                            doPack (packPair (packUnit, packString)) ((), E) cout ;
                            cin')
                   else let
-                    val ret = REPL.RE cfg source
+                    val ret = REPL.RE (!cfg) source
                      in doPack REPL_Serialize.command_outputs_packer ret cout
                       ; cin'
                     end )

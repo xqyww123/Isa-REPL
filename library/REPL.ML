@@ -225,6 +225,9 @@ fun init_thy ignore_imports {base_dir, thy_qualifier} wid source =
 
       fun parse import =
         let val can_load = Execution.is_running Document_ID.none
+            val import = Resources.import_name thy_qualifier Path.root import
+                      |> #theory_name
+            (*Theory loader*)
             fun load can_load import =
               case Symtab.lookup evaluated_theories import
                 of SOME thy => thy
@@ -234,7 +237,7 @@ fun init_thy ignore_imports {base_dir, thy_qualifier} wid source =
                  | NONE     => (
                if Long_Name.is_qualified import
                then if can_load
-               then ((Thy_Info.use_thy import
+               then ((Thy_Info.use_theories (Options.default ()) thy_qualifier [(import, Position.none)]
                       handle ERROR _ => raise REPL_fail ("Bad theory import " ^ import));
                      load false import)
                else raise REPL_fail ("Bad theory import " ^ import)

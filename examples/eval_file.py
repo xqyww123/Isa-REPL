@@ -21,7 +21,7 @@ if len(sys.argv) != 3:
 addr   = sys.argv[1]
 target = sys.argv[2]
 
-c = Client(addr, thy_qualifier='HOL')
+c = Client(addr, 'WebAssembly')
 c.set_trace (False) # I disable the tracing for speeding up the evaluation
                     # Consequently, all c.eval(..)[0] will be None
 
