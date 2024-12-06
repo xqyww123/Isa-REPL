@@ -14,7 +14,7 @@ if len(sys.argv) != 2:
     exit(1)
 
 addr = sys.argv[1]
-c = Client(addr)
+c = Client(addr, 'HOL')
 
 print("""
 This example demonstrates how to split a script into a
