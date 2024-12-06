@@ -395,13 +395,6 @@ fun init_repler id thy =
 
 (** Lex commands **)
 
-
-fun split_commands cfg wid state source =
-  let val thy = get_thy cfg wid state source
-      val kws = Thy_Header.get_keywords thy
-   in lex_split true true kws (Token.is_kind Token.Command) source
-  end
-
 fun lex_commands cfg source =
   case Thread_Data.get Session_ID
     of NONE         => raise REPL_fail "INTERNAL ERROR: worker ID lost"

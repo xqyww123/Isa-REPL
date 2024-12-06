@@ -8,7 +8,7 @@ class Client:
     A client for connecting Isabelle REPL
     """
 
-    VERSION = '0.7.0'
+    VERSION = '0.8.0'
     def __init__(self, addr, thy_qualifier):
         """
         Create a client and connect it to `addr`.
@@ -429,7 +429,7 @@ class Client:
         A list of pretty-printed string of the facts will be returned in the same order of the names.
         """
         if not isinstance(names, str):
-            raise ValueError("the argument term must be a string")
+            raise ValueError("the argument `names` must be a string")
         mp.pack ("\x05fact", self.cout)
         mp.pack (names, self.cout)
         self.cout.flush()
@@ -440,8 +440,35 @@ class Client:
         Similar with `fact` but returns the S-expressions of the terms of the facts.
         """
         if not isinstance(names, str):
-            raise ValueError("the argument term must be a string")
+            raise ValueError("the argument `names` must be a string")
         mp.pack ("\x05sexpr_fact", self.cout)
         mp.pack (names, self.cout)
         self.cout.flush()
         return Client.__parse_control__ (self.unpack.unpack())
+
+    def set_thy_qualifier (self, thy_qualifier):
+        """
+        Change `thy_qualifier`.
+        See `Client.__init__` for the explaination of `thy_qualifier`
+        Returns None if success.
+        """
+        if not isinstance(thy_qualifier, str):
+            raise ValueError("the argument `thy_qualifier` must be a string")
+        mp.pack ("\x05qualifier", self.cout)
+        mp.pack (thy_qualifier, self.cout)
+        self.cout.flush ()
+        return Client.__parse_control__ (self.unpack.unpack())
+
+    def session_name_of (self, path):
+        """
+        Given a `path` to an Isabelle theory file, `session_name_of` returns
+        the name of the session containing the theory file, or None if fails
+        to figure this out.
+        """
+        if not isinstance(path, str):
+            raise ValueError("the argument `path` must be a string")
+        mp.pack ("\x05session-of", self.cout)
+        mp.pack (path, self.cout)
+        self.cout.flush ()
+        return Client.__parse_control__ (self.unpack.unpack())
+
