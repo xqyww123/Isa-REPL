@@ -9,15 +9,31 @@ class Client:
     """
 
     VERSION = '0.7.0'
-    def __init__(self, addr, thy_qualifier=""):
+    def __init__(self, addr, thy_qualifier):
         """
         Create a client and connect it to `addr`.
 
-        If the script to be evaluated contains theory headers like
-            `theory AAA imports List begin ... end`
-        arguement `thy_qualifier` indicates the default session under which
-        we should look for a local theory (e.g. List) if it is not fully qualified ("HOL.List").
-        Default: the base session as indicated in the ./repl_server.sh
+        Arghument `thy_qualifier` is the session name used to parse short theory names,
+        which will be qualified by this qualifier.
+
+        For example, if you want to evaluate `$ISABELLE_HOME/src/HOL/List.thy`
+        which imports `Lifting_Set` which is a short name while its full name
+        is `HOL.Lifting_Set`.
+        In this case, you must indicate `thy_qualifier = "HOL"`. Otherwise,
+        the REPL cannot determine which import target do you mean.
+
+        As another example, to evaluate
+        `$AFP/thys/WebAssembly/Wasm_Printing/Wasm_Interpreter_Printing_Pure.thy`
+        you should indicate `thy_qualifier = "WebAssembly"`.
+
+        Basically, whenever you evaluate some existing file, the `thy_qualifier`
+        should be the session name of that file.
+
+        If you are unaware of the session name of a file, you could call
+        `Client.session_name_of` to enquiry.
+
+        You could also call `Client.set_thy_qualifier` to change this `thy_qualifier`
+        after initialization.
         """
         if not isinstance(thy_qualifier, str):
             raise ValueError("the argument thy_qualifier must be a string")
