@@ -16,9 +16,9 @@ $BASE/example_eval.py $1 &
 $BASE/example_lex.py $1 &
 $BASE/example_plugin.py $1 &
 $BASE/example_sledgehammer.py $1 &
-$BASE/examples/example_parse.py $1 &
-$BASE/examples/example_context.py $1 &
-$BASE/examples/example_rollback.py $1 &
+$BASE/example_parse.py $1 &
+$BASE/example_context.py $1 &
+$BASE/example_rollback.py $1 &
 $BASE/eval_file.py $1 $(isabelle getenv -b ISABELLE_HOME)/src/HOL/List.thy
 
 
