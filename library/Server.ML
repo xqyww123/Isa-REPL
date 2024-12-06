@@ -14,6 +14,8 @@ val REPL_ML_sender_DO_NOT_OVERRIDE_locker_
 
 structure REPL_Server : REPL_SEVER = struct
 
+(* Server *)
+
 type address = string (*IP address:port*)
 
 fun close_permissive socket =
@@ -138,9 +140,9 @@ fun startup base_dir_of_theories thy0 addr0 =
 
           val (version, cin) = MessagePackBinIO.Unpack.doUnpack
                                           (MessagePackBinIO.Unpack.unpackString) cin
-          val _ = if version = "0.7.0" then ()
+          val _ = if version = "0.8.0" then ()
                   else error "The server is connected with a wrong version of the client.\n\
-                             \Please run `pip install \"IsaREPL==0.7.0\" --force-reinstall` to update your client."
+                             \Please run `pip install \"IsaREPL==0.8.0\" --force-reinstall` to update your client."
 
           val (thy_qualifier, cin) = MessagePackBinIO.Unpack.doUnpack
                                           (MessagePackBinIO.Unpack.unpackString) cin
@@ -244,10 +246,17 @@ fun startup base_dir_of_theories thy0 addr0 =
                                val _ = output (REPL_Serialize.pack_context s_expr (Context.Proof ctxt)) state
                             in cin''
                            end
-                     | "\005quanlifier" => let
+                     | "\005qualifier" => let
                                val (qualifier, cin'') = doUnpack unpackString cin'
                                val {base_dir, ...} = !cfg
                                val _ = cfg := {base_dir=base_dir, thy_qualifier=qualifier}
+                               val _ = output packUnit ()
+                            in cin''
+                           end
+                     | "\005session-of" => let
+                               val (path, cin'') = doUnpack unpackString cin'
+                               val session = REPL_Aux.parse_session_name (Path.explode path)
+                               val _ = output (packOption packString) session
                             in cin''
                            end
                     end handle REPL.REPL_fail E => (

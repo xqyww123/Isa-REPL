@@ -22,6 +22,14 @@ addr   = sys.argv[1]
 target = sys.argv[2]
 
 c = Client(addr, 'HOL')
+
+session = c.session_name_of (target)
+if session:
+    print ("The session is: " + session)
+    c.set_thy_qualifier(session)
+else:
+    print ("Fail to infer the session of the target file. The evaluation can fail.")
+
 c.set_trace (False) # I disable the tracing for speeding up the evaluation
                     # Consequently, all c.eval(..)[0] will be None
 
