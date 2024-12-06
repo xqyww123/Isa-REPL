@@ -15,6 +15,8 @@ class Client:
 
         Arghument `thy_qualifier` is the session name used to parse short theory names,
         which will be qualified by this qualifier.
+        Besides, any created theories during the evaluation will be qualified under
+        `thy_qualifier`.
 
         For example, if you want to evaluate `$ISABELLE_HOME/src/HOL/List.thy`
         which imports `Lifting_Set` which is a short name while its full name

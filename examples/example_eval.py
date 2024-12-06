@@ -18,7 +18,7 @@ if len(sys.argv) != 2:
 
 addr = sys.argv[1]
 
-c = Client(addr, thy_qualifier="HOL")
+c = Client(addr, 'HOL')
 
 def echo_eval (src):
     print('>>> '.join(src.splitlines(True)))
@@ -29,7 +29,7 @@ def echo_eval (src):
 echo_eval ("""
 section \<open>The datatype of finite lists\<close>
 
-theory List
+theory MyList
 imports Sledgehammer Lifting_Set
 begin
 """)
@@ -58,7 +58,7 @@ definition "ONE = (1::nat)"
 end
 
 theory HHH
-  imports List
+  imports MyList
 begin
 lemma "ONE + ONE = 2"
     unfolding ONE_def

@@ -213,7 +213,7 @@ fun init_thy ignore_imports {base_dir, thy_qualifier} wid source =
       val sname = #name header
 
       fun qualify_name {name,imports,keywords} =
-            {name=apfst (Long_Name.qualify ("REPL" ^ string_of_int wid)) name, imports=imports, keywords=keywords}
+            {name=apfst (Long_Name.qualify thy_qualifier) name, imports=imports, keywords=keywords}
       val header = qualify_name header
 
       (* init theory *)
@@ -361,7 +361,7 @@ fun RE cfg source : command_outputs =
                             then let
                               val thys = the_default Symtab.empty (Thread_Data.get evaluated_theories)
                               val thy  = Toplevel.end_theory pos s'
-                              val thys'= Symtab.update_new (Context.theory_name {long=false} thy, thy) thys
+                              val thys'= Symtab.update_new (Context.theory_name {long=true} thy, thy) thys
                               in Thread_Data.put evaluated_theories (SOME thys')
                              end
                             else ()
@@ -411,7 +411,7 @@ fun lex_commands cfg source =
             val ret = lex_split true true kws (Token.is_kind Token.Command) src
 
             val thys = the_default Symtab.empty (Thread_Data.get evaluated_theories)
-            val thys'= Symtab.update_new (Context.theory_name {long=false} thy, thy) thys
+            val thys'= Symtab.update_new (Context.theory_name {long=true} thy, thy) thys
          in map (Symbol_Pos.implode) ret
          :: Thread_Data.setmp evaluated_theories (SOME thys') parse srcs
         end

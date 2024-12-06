@@ -251,7 +251,7 @@ fun startup base_dir_of_theories thy0 addr0 =
                             in cin''
                            end
                     end handle REPL.REPL_fail E => (
-                           doPack (packPair (packUnit, packString)) ((), E) cout ;
+                           doPack ( packPair (packUnit, packString)) ((), E) cout ;
                            cin')
                   else let
                     val ret = REPL.RE (!cfg) source

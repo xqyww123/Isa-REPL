@@ -18,7 +18,7 @@ if len(sys.argv) != 2:
 
 addr = sys.argv[1]
 
-c = Client(addr)
+c = Client(addr, 'HOL')
 
 def pp (x):
     print(json.dumps(x, indent=2))
