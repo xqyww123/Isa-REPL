@@ -197,10 +197,47 @@ val Pure = Theory.get_pure ()
 val pure_keywords = Thy_Header.get_keywords Pure
 
 val evaluated_theories = Thread_Data.var () : theory Symtab.table Thread_Data.var
+val global_loaded_theories = Synchronized.var "REPL loaded theories" Symtab.empty
 
 exception REPL_fail of string
 
 fun is_theory_tok tok = Token.is_kind Token.Command tok andalso Token.content_of tok = "theory"
+
+val loader_locker = Synchronized.var "REPL theory loader locker" ()
+
+fun load_thy thy_qualifier targets =
+    Thy_Info.use_theories (Options.default ()) thy_qualifier (map (rpair Position.none) targets)
+  
+fun thy_loader thy_qualifier targets =
+  let val targets = map ( Resources.import_name thy_qualifier Path.root
+                       #> #theory_name ) targets
+      val evaluated_theories = the_default Symtab.empty (Thread_Data.get evaluated_theories)
+      val can_load = Execution.is_running Document_ID.none
+      fun is_loaded import =
+          Symtab.defined evaluated_theories import orelse
+          is_some (Thy_Info.lookup_theory import)
+      val _ = Synchronized.change loader_locker (fn () =>
+        let val not_loaded = filter_out is_loaded targets
+         in if not can_load andalso not (null not_loaded)
+            then raise REPL_fail ("Fail to load " ^ space_implode ", " not_loaded)
+            else ()
+          ; if not (null not_loaded)
+            then (Thy_Info.use_theories (Options.default ()) thy_qualifier
+                                        (map (rpair Position.none) not_loaded) ; ())
+            else ()
+        end
+        )
+      fun load' import =
+        case Symtab.lookup evaluated_theories import
+          of SOME thy => thy
+           | NONE     => (
+        case Thy_Info.lookup_theory import
+          of SOME thy => thy
+           | NONE     =>
+         raise REPL_fail ("Bad theory import " ^ import)
+        )
+   in map load' targets
+  end
 
 fun init_thy ignore_imports {base_dir, thy_qualifier} wid source =
   let val toks = Token.tokenize pure_keywords {strict = false} source
@@ -223,31 +260,9 @@ fun init_thy ignore_imports {base_dir, thy_qualifier} wid source =
               then raise REPL_fail ("Theory " ^ #1 sname ^ " has been defined.")
               else ()
 
-      fun parse import =
-        let val can_load = Execution.is_running Document_ID.none
-            val import = Resources.import_name thy_qualifier Path.root import
-                      |> #theory_name
-            (*Theory loader*)
-            fun load can_load import =
-              case Symtab.lookup evaluated_theories import
-                of SOME thy => thy
-                 | NONE     => (
-              case Thy_Info.lookup_theory import
-                of SOME thy => thy
-                 | NONE     => (
-               if Long_Name.is_qualified import
-               then if can_load
-               then ((Thy_Info.use_theories (Options.default ()) thy_qualifier [(import, Position.none)]
-                      handle ERROR _ => raise REPL_fail ("Bad theory import " ^ import));
-                     load false import)
-               else raise REPL_fail ("Bad theory import " ^ import)
-               else load can_load (Long_Name.qualify thy_qualifier import)
-              ))
-         in load can_load import
-        end
       val parents =
             if ignore_imports then []
-            else imports |> map (fn (import, _ (*pos*)) => parse import)
+            else thy_loader thy_qualifier (map fst imports)
       val parents =
             if null parents then [Pure] else parents
    in Resources.begin_theory base_dir header parents
@@ -372,6 +387,7 @@ fun RE cfg source : command_outputs =
                               val thy  = Toplevel.end_theory pos s'
                               val thys'= Symtab.update_new (Context.theory_name {long=true} thy, thy) thys
                               in Thread_Data.put evaluated_theories (SOME thys')
+                               ; Thy_Info.register_thy thy
                              end
                             else ()
                  in loop (if trace then (catch_state plugin_output err tr s')::ret else []) trs srcs s'
