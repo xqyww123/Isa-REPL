@@ -203,11 +203,9 @@ exception REPL_fail of string
 
 fun is_theory_tok tok = Token.is_kind Token.Command tok andalso Token.content_of tok = "theory"
 
+val load_targets  = Synchronized.var "REPL import targets" ([] : string list)
 val loader_locker = Synchronized.var "REPL theory loader locker" ()
 
-fun load_thy thy_qualifier targets =
-    Thy_Info.use_theories (Options.default ()) thy_qualifier (map (rpair Position.none) targets)
-  
 fun thy_loader thy_qualifier targets =
   let val targets = map ( Resources.import_name thy_qualifier Path.root
                        #> #theory_name ) targets
@@ -216,17 +214,24 @@ fun thy_loader thy_qualifier targets =
       fun is_loaded import =
           Symtab.defined evaluated_theories import orelse
           is_some (Thy_Info.lookup_theory import)
-      val _ = Synchronized.change loader_locker (fn () =>
+
+      val _ = Synchronized.change load_targets (fn ex =>
         let val not_loaded = filter_out is_loaded targets
          in if not can_load andalso not (null not_loaded)
             then raise REPL_fail ("Fail to load " ^ space_implode ", " not_loaded)
-            else ()
-          ; if not (null not_loaded)
-            then (Thy_Info.use_theories (Options.default ()) thy_qualifier
-                                        (map (rpair Position.none) not_loaded) ; ())
-            else ()
+            else not_loaded @ ex
         end
         )
+
+      val _ = Synchronized.change loader_locker (fn () =>
+        let val targets = Synchronized.change_result load_targets (fn targets => (targets, []))
+                       |> filter_out (is_some o Thy_Info.lookup_theory)
+         in if null targets
+            then ()
+            else (Thy_Info.use_theories (Options.default ()) thy_qualifier
+                                        (map (rpair Position.none) targets) ; ())
+        end)
+
       fun load' import =
         case Symtab.lookup evaluated_theories import
           of SOME thy => thy
