@@ -387,7 +387,11 @@ fun RE cfg source : command_outputs =
                               val thy  = Toplevel.end_theory pos s'
                               val thys'= Symtab.update_new (Context.theory_name {long=true} thy, thy) thys
                               in Thread_Data.put evaluated_theories (SOME thys')
-                               ; Thy_Info.register_thy thy
+                               ; (Thy_Info.register_thy thy
+                                  handle err as Exn.ERROR msg => (
+                                    if String.isPrefix "Cannot update finished theory" msg
+                                    then ()
+                                    else Exn.reraise err ))
                              end
                             else ()
                  in loop (if trace then (catch_state plugin_output err tr s')::ret else []) trs srcs s'
