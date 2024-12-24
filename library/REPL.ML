@@ -290,24 +290,30 @@ fun parse_text' thy init text =
   |> Outer_Syntax.parse_spans
   |> map (Command_Span.content #> Outer_Syntax.parse_span thy init);
 
-fun lex_split drop_first drop_if_no_meet kws P source =
+fun lex_split drop_first drop_if_no_meet kws ATTACH P source =
   let val toks = Token.tokenize kws {strict = false} source
       val d = the (Position.offset_of (Token.pos_of (hd toks)))
-      fun split _ met (_,ret,src) [] =
+      fun split _ met (_,_,ret,src) [] =
             rev (if drop_if_no_meet andalso not met then ret else src::ret)
-        | split drop_first met (m,ret,src) (x :: xs) =
-            if P x
-            then let val m' = the (Position.offset_of (Token.pos_of x)) - d
+        | split drop_first met (m,h0,ret,src) (x :: xs) =
+            let val h = the_default x h0
+             in if P x
+            then let val m' = the (Position.offset_of (Token.pos_of h)) - d
                      val n = m' - m
                   in if n = 0 orelse drop_first
-                  then split false true (m', ret, drop n src) xs
-                  else split false true (m', take n src::ret, drop n src) xs
+                  then split false true (m', NONE, ret, drop n src) xs
+                  else split false true (m', NONE, take n src::ret, drop n src) xs
                  end
-            else split drop_first met (m,ret, src) xs
-   in split drop_first false (0,[],source) toks
+            else if ATTACH x
+            then split drop_first met (m, SOME h, ret, src) xs
+            else if Token.is_space x
+            then split drop_first met (m, h0, ret, src) xs
+            else split drop_first met (m, NONE, ret, src) xs
+            end
+   in split drop_first false (0,NONE,[],source) toks
   end
 
-val split_thy_headers = lex_split false false pure_keywords is_theory_tok
+val split_thy_headers = lex_split false false pure_keywords Token.is_command_modifier is_theory_tok
 
 fun parse_text cfg wid state source =
   let val thy = get_thy cfg wid state source
@@ -426,7 +432,7 @@ fun lex_commands cfg source =
                         of SOME thy => thy
                          | NONE => the_default Pure (try Toplevel.theory_of s0)
             val kws = Thy_Header.get_keywords thy
-            val ret = lex_split true true kws (Token.is_kind Token.Command) src
+            val ret = lex_split true true kws Token.is_command_modifier (Token.is_kind Token.Command) src
 
             val thys = the_default Symtab.empty (Thread_Data.get evaluated_theories)
             val thys'= Symtab.update_new (Context.theory_name {long=true} thy, thy) thys

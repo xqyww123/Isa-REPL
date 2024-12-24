@@ -35,6 +35,10 @@ lemma "ONE + ONE = 2"
     unfolding ONE_def
     by auto
 
+context begin
+private lemma True by auto
+end
+
 end
 """
 print("Source:")
