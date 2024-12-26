@@ -244,7 +244,10 @@ class Client:
         'error': data[1]    # Either None or a string,
                             # any error that interrtupts the evaluation process, causing the
                             # later commands not executed.
-
+                            #
+                            # **No** error happens during the evaluation, **if and only if** this field is None.
+                            # However, if some error happens, this field may not provide all details.
+                            # Instead, the details can be given in `outputs['errors']`.
         }
 
     def silly_eval(self, source):

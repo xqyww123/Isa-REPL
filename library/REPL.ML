@@ -395,7 +395,8 @@ fun RE cfg source : command_outputs =
             case Toplevel.command_errors true tr s
               of (err, NONE)    =>
                     (mk_command_outputs (if trace then err_state err tr s::ret else [])
-                                        (SOME "Some error happens"), s0)
+                                        (SOME "Some error happens. Details may be given in the field `outputs.errors.` \
+                                              \See the document for Python client's `boring_parse` method."), s0)
                | (err, SOME s'0) =>
                 let val (plugin_output, s') = run_plugins plugins s'0
                     val _ = if Toplevel.is_end_theory s'
