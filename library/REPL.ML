@@ -82,6 +82,8 @@ type context = {
 val get_context : unit -> context
 val get_ctxt : unit -> Proof.context
 
+val disable_output : unit -> unit
+
 end
 
 structure REPL : REPL = struct
@@ -180,6 +182,19 @@ fun init_printers () =
   end
 
 val _ = init_printers ()
+
+fun disable_output () = (
+  Private_Output.writeln_fn := K () ;
+  Private_Output.state_fn := K () ;
+  Private_Output.information_fn := K () ;
+  Private_Output.tracing_fn := K () ;
+  Private_Output.warning_fn := K () ;
+  Private_Output.legacy_fn := K () ;
+  Private_Output.error_message_fn := K () ;
+  Private_Output.status_fn := K () ;
+  Private_Output.report_fn := K () ;
+  Private_Output.result_fn := K (K ())
+)
 
 (*val _ = Multithreading.parallel_proofs := 0 (*TODO: disable me!*)*)
 
@@ -389,7 +404,8 @@ fun RE cfg source : command_outputs =
             case Toplevel.command_errors true tr s
               of (err, NONE)    =>
                     (mk_command_outputs (if trace then err_state err tr s::ret else [])
-                                        (SOME "Some error happens"), s0)
+                                        (SOME "Some error happens. Details may be given in the field `outputs.errors.` \
+                                              \See the document for Python client's `boring_parse` method."), s0)
                | (err, SOME s'0) =>
                 let val (plugin_output, s') = run_plugins plugins s'0
                     val _ = if Toplevel.is_end_theory s'
