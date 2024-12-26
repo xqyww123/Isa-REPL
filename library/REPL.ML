@@ -82,6 +82,8 @@ type context = {
 val get_context : unit -> context
 val get_ctxt : unit -> Proof.context
 
+val disable_output : unit -> unit
+
 end
 
 structure REPL : REPL = struct
@@ -180,6 +182,19 @@ fun init_printers () =
   end
 
 val _ = init_printers ()
+
+fun disable_output () = (
+  Private_Output.writeln_fn := K () ;
+  Private_Output.state_fn := K () ;
+  Private_Output.information_fn := K () ;
+  Private_Output.tracing_fn := K () ;
+  Private_Output.warning_fn := K () ;
+  Private_Output.legacy_fn := K () ;
+  Private_Output.error_message_fn := K () ;
+  Private_Output.status_fn := K () ;
+  Private_Output.report_fn := K () ;
+  Private_Output.result_fn := K (K ())
+)
 
 (*val _ = Multithreading.parallel_proofs := 0 (*TODO: disable me!*)*)
 

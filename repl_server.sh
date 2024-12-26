@@ -88,8 +88,11 @@ cat <<EOF > $DIR/REPL$$.thy
 theory REPL$$
 imports "Isa_REPL.Isa_REPL"
 begin
-ML \\<open>Isabelle_Thread.join (REPL_Server.startup (Path.explode "$(printf '%b' $MASTER_DIR)") NONE "$(printf '%b' $ADDR)");
-  error "IGNORE THIS ERROR"\\<close>
+ML \\<open>
+REPL.disable_output () ;
+Isabelle_Thread.join (REPL_Server.startup (Path.explode "$(printf '%b' $MASTER_DIR)") NONE "$(printf '%b' $ADDR)");
+error "IGNORE THIS ERROR"
+\\<close>
 end
 EOF
 
