@@ -241,10 +241,19 @@ fun thy_loader thy_qualifier targets =
       val _ = Synchronized.change loader_locker (fn () =>
         let val targets = Synchronized.change_result load_targets (fn targets => (targets, []))
                        |> filter_out (is_some o Thy_Info.lookup_theory)
-         in if null targets
+            fun seg_load L =
+              if null L
+              then ()
+              else let val (this, next) = chop 16 L
+                    in Thy_Info.use_theories (Options.default ()) thy_qualifier
+                                        (map (rpair Position.none) this)
+                     ; seg_load next
+                   end
+         in (* if null targets
             then ()
             else (Thy_Info.use_theories (Options.default ()) thy_qualifier
-                                        (map (rpair Position.none) targets) ; ())
+                                        (map (rpair Position.none) targets) ; ()) *)
+            seg_load targets
         end)
 
       fun load' import =
