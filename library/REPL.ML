@@ -630,13 +630,16 @@ fun get_context () =
   case (try Toplevel.context_of s, try Toplevel.proof_of s)
     of (SOME ctxt, prfstate) =>
       let
-        val thy = Proof_Context.theory_of ctxt
-
         val facts = Proof_Context.facts_of ctxt
         val props = map #1 (Facts.props facts)
+
+        val facts' = if can Local_Theory.assert ctxt
+             then Proof_Context.facts_of (Local_Theory.target_of ctxt)
+             else Global_Theory.facts_of (Proof_Context.theory_of ctxt)
+
         val local_facts =
           (if null props then [] else [("<unnamed>", props)]) @
-          Facts.dest_static false [Global_Theory.facts_of thy] facts
+          Facts.dest_static false [facts'] facts
 
         val assms = Assumption.all_prems_of ctxt
 
