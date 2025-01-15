@@ -3,8 +3,12 @@ signature REPL = sig
 datatype message_type = NORMAL | TRACING | WARNING
 type message = message_type * string
 
-type collector = Toplevel.state -> MessagePackBinIO.Pack.raw_packer option *
-                                   Toplevel.state option
+type collector = {current_command: Command_Span.span,
+                  state: Toplevel.state, (*the state after executing the current command*)
+                  remaining: (Toplevel.transition * Command_Span.span) list
+                                         (*the remaining code within the same theory*)}
+              -> MessagePackBinIO.Pack.raw_packer option *
+                 Toplevel.state option
 type plugin_name = string
 type plugin  = plugin_name * collector
 type plugins = plugin list
@@ -33,8 +37,9 @@ exception REPL_fail of string
 
 type Session_ID = int
 val init_repler : Session_ID -> theory option -> unit
-val RE : {base_dir: Path.T, thy_qualifier: string} -> string -> command_outputs
-val lex_commands : {base_dir: Path.T, thy_qualifier: string} -> string -> string list
+type cfg = {base_dir: Path.T, thy_qualifier: string}
+val RE : cfg -> string -> command_outputs
+val lex_commands : cfg -> string -> string list
 val set_trace : bool -> unit
 
 (* Plugin *)
@@ -108,11 +113,16 @@ type flags = {
         is_proof   : bool
 }
 
-type collector = Toplevel.state -> (BinIO.StreamIO.outstream -> unit) option *
-                                   Toplevel.state option
+type collector = {current_command: Command_Span.span,
+                  state: Toplevel.state, (*the state after executing the current command*)
+                  remaining: (Toplevel.transition * Command_Span.span) list
+                                         (*the remaining code within the same theory*)}
+              -> MessagePackBinIO.Pack.raw_packer option *
+                 Toplevel.state option
 type plugin_name = string
 type plugin  = plugin_name * collector
 type plugins = plugin list
+type cfg = {base_dir: Path.T, thy_qualifier: string}
 
 type command_output = {
         command_name : string,
@@ -132,10 +142,12 @@ type command_outputs = {
 
 (** Plugin **)
 
-fun run_plugins (plugins : plugins) s =
+fun run_plugins (plugins : plugins) (current,remaining,s) =
   let fun loop ret [] s = (ret, s)
         | loop ret ((name,collector)::plugins) s =
-        case collector s
+        case collector {current_command = current,
+                        state = s,
+                        remaining = remaining}
           of (SOME out, SOME s') => loop ((name,out)::ret) plugins s'
            | (SOME out, NONE   ) => loop ((name,out)::ret) plugins s
            | (NONE    , SOME s') => loop ret plugins s'
@@ -312,7 +324,7 @@ fun get_thy cfg wid state source = (
 fun parse_text' thy init text =
      Token.tokenize (Thy_Header.get_keywords thy) {strict = false} text
   |> Outer_Syntax.parse_spans
-  |> map (Command_Span.content #> Outer_Syntax.parse_span thy init);
+  |> map (` (Command_Span.content #> Outer_Syntax.parse_span thy init))
 
 fun lex_split drop_first drop_if_no_meet kws ATTACH P source =
   let val toks = Token.tokenize kws {strict = false} source
@@ -342,7 +354,7 @@ val split_thy_headers = lex_split false false pure_keywords Token.is_command_mod
 fun parse_text cfg wid state source =
   let val thy = get_thy cfg wid state source
    in parse_text' thy (K thy) source
-   |> filter_out Toplevel.is_ignored
+   |> filter_out (Toplevel.is_ignored o fst)
   end
 
 fun set_trace v =
@@ -400,14 +412,14 @@ fun RE cfg source : command_outputs =
             
       fun loop ret [] [] s = (mk_command_outputs ret NONE, s)
         | loop ret [] (src::srcs) s = loop ret (parse_text cfg wid s src) srcs s
-        | loop ret (tr::trs) srcs s =
+        | loop ret ((tr,current_cmd)::trs) srcs s =
             case Toplevel.command_errors true tr s
               of (err, NONE)    =>
                     (mk_command_outputs (if trace then err_state err tr s::ret else [])
                                         (SOME "Some error happens. Details may be given in the field `outputs.errors.` \
                                               \See the document for Python client's `boring_parse` method."), s0)
                | (err, SOME s'0) =>
-                let val (plugin_output, s') = run_plugins plugins s'0
+                let val (plugin_output, s') = run_plugins plugins (current_cmd, trs, s'0)
                     val _ = if Toplevel.is_end_theory s'
                             then let
                               val thys = the_default Symtab.empty (Thread_Data.get evaluated_theories)
@@ -441,6 +453,14 @@ fun init_repler id thy =
 
 
 (** Lex commands **)
+
+(*
+fun split_commands cfg wid state source =
+  let val thy = get_thy cfg wid state source
+      val kws = Thy_Header.get_keywords thy
+   in lex_split true true kws (Token.is_kind Token.Command) source
+  end
+*)
 
 fun lex_commands cfg source =
   case Thread_Data.get Session_ID
@@ -515,8 +535,12 @@ fun rollback_state name =
      case AList.lookup (op =) H name
        of NONE => raise REPL_fail ("Historical state " ^ name ^ " is not found.")
         | SOME s' => let
-       val (plugin_output, _) = run_plugins plugins s'
-    in Thread_Data.put state (SOME (s', cnt, t, H))
+       val (plugin_output, s'') =
+            run_plugins plugins (Command_Span.Span
+                                    (Command_Span.Command_Span ("<rollback>", Position.none), []),
+                                 [],
+                                 s')
+    in Thread_Data.put state (SOME (s'', cnt, t, H))
      ; catch_state' wid plugin_output [] "" s'
    end 
 
@@ -532,7 +556,12 @@ fun list_states' () =
   case Thread_Data.get state
     of NONE           => raise REPL_fail  "INTERNAL ERROR: state lost"
      | SOME (_,_,_,H) => map (apsnd (fn s' =>
-          catch_state' wid (#1 (run_plugins plugins s')) [] "" s'
+          catch_state' wid (#1 (
+            run_plugins plugins (Command_Span.Span
+                                    (Command_Span.Command_Span ("<list>", Position.none), []),
+                                 [],
+                                 s')
+          )) [] "" s'
        )) H
 
 (** Parser **)
