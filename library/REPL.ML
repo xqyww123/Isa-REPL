@@ -413,7 +413,7 @@ fun RE cfg source : command_outputs =
       fun loop ret [] [] s = (mk_command_outputs ret NONE, s)
         | loop ret [] (src::srcs) s = loop ret (parse_text cfg wid s src) srcs s
         | loop ret ((tr,current_cmd)::trs) srcs s =
-            case Toplevel.command_errors true tr s
+            case Toplevel.command_errors false tr s
               of (err, NONE)    =>
                     (mk_command_outputs (if trace then err_state err tr s::ret else [])
                                         (SOME "Some error happens. Details may be given in the field `outputs.errors.` \
