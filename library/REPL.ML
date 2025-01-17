@@ -41,6 +41,7 @@ type cfg = {base_dir: Path.T, thy_qualifier: string}
 val RE : cfg -> string -> command_outputs
 val lex_commands : cfg -> string -> string list
 val set_trace : bool -> unit
+val set_register_thy : bool -> unit
 
 (* Plugin *)
 
@@ -218,7 +219,8 @@ type state_history = (string * Toplevel.state) list
 
 type counter = int
 type trace = bool
-val state = Thread_Data.var () : (Toplevel.state * counter * trace * state_history) Thread_Data.var
+type register_theory = bool
+val state = Thread_Data.var () : (Toplevel.state * counter * (trace * register_theory) * state_history) Thread_Data.var
 
 val Pure = Theory.get_pure ()
 val pure_keywords = Thy_Header.get_keywords Pure
@@ -360,7 +362,12 @@ fun parse_text cfg wid state source =
 fun set_trace v =
   case Thread_Data.get state
     of NONE => raise REPL_fail "INTERNAL ERROR: state lost"
-     | SOME (s,c,_,H) => Thread_Data.put state (SOME (s, c, v, H))
+     | SOME (s,c,(_,rt),H) => Thread_Data.put state (SOME (s, c, (v, rt), H))
+
+fun set_register_thy v =
+  case Thread_Data.get state
+    of NONE => raise REPL_fail "INTERNAL ERROR: state lost"
+     | SOME (s,c,(tr,_),H) => Thread_Data.put state (SOME (s, c, (tr, v), H))
 
 val trim_err = map (trim_makrup o #2 o #1)
 fun catch_state' wid plugin_output err command s : command_output = {
@@ -381,7 +388,7 @@ fun catch_state' wid plugin_output err command s : command_output = {
 fun RE cfg source : command_outputs =
   case Thread_Data.get state
     of NONE                  => {outputs=NONE, error=SOME "INTERNAL ERROR: state lost"}
-     | SOME (s0,cnt,trace,H) =>
+     | SOME (s0,cnt,(trace, register_theory'),H) =>
   case Thread_Data.get Session_ID
     of NONE                => {outputs=NONE, error=SOME "INTERNAL ERROR: worker ID lost"}
      | SOME (wid, plugins) =>
@@ -409,7 +416,7 @@ fun RE cfg source : command_outputs =
           }
 
       fun mk_command_outputs a b = {outputs = if trace then SOME (rev a) else NONE, error=b} : command_outputs
-            
+
       fun loop ret [] [] s = (mk_command_outputs ret NONE, s)
         | loop ret [] (src::srcs) s = loop ret (parse_text cfg wid s src) srcs s
         | loop ret ((tr,current_cmd)::trs) srcs s =
@@ -421,24 +428,26 @@ fun RE cfg source : command_outputs =
                | (err, SOME s'0) =>
                 let val (plugin_output, s') = run_plugins plugins (current_cmd, trs, s'0)
                     val _ = if Toplevel.is_end_theory s'
-                            then let
-                              val thys = the_default Symtab.empty (Thread_Data.get evaluated_theories)
-                              val thy  = Toplevel.end_theory pos s'
-                              val thys'= Symtab.update_new (Context.theory_name {long=true} thy, thy) thys
-                              in Thread_Data.put evaluated_theories (SOME thys')
-                               ; (Thy_Info.register_thy thy
-                                  handle err as Exn.ERROR msg => (
-                                    if String.isPrefix "Cannot update finished theory" msg
-                                    then ()
-                                    else Exn.reraise err ))
-                             end
+                            then if register_theory'
+                              then let
+                                val thys = the_default Symtab.empty (Thread_Data.get evaluated_theories)
+                                val thy  = Toplevel.end_theory pos s'
+                                val thys'= Symtab.update_new (Context.theory_name {long=true} thy, thy) thys
+                                in Thread_Data.put evaluated_theories (SOME thys')
+                                 ; (Thy_Info.register_thy thy
+                                    handle err as Exn.ERROR msg => (
+                                      if String.isPrefix "Cannot update finished theory" msg
+                                      then ()
+                                      else Exn.reraise err ))
+                               end
+                              else ()
                             else ()
                  in loop (if trace then (catch_state plugin_output err tr s')::ret else []) trs srcs s'
                 end
 
       val (ret, s') = loop [] [] srcs s0
 
-   in Thread_Data.put state (SOME (s', cnt+1, trace, H))
+   in Thread_Data.put state (SOME (s', cnt+1, (trace, register_theory'), H))
     ; ret
   end
   handle REPL_fail E => {outputs = NONE, error=SOME E}
@@ -447,7 +456,7 @@ fun init_repler id thy =
   let 
    in Thread_Data.put Session_ID (SOME (id, []))
     ; Synchronized.change message_buffer (Inttab.update_new (id, []))
-    ; Thread_Data.put state (SOME (Toplevel.make_state thy, 0, true, []))
+    ; Thread_Data.put state (SOME (Toplevel.make_state thy, 0, (true, true), []))
   end
 
 

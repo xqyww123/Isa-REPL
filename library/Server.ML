@@ -172,6 +172,14 @@ fun startup base_dir_of_theories thy0 addr0 =
                           REPL.set_trace false;
                           output packUnit ();
                           cin')
+                     | "\005register_thy" => (
+                          REPL.set_register_thy true;
+                          output packUnit ();
+                          cin')
+                     | "\005no_register_thy" => (
+                          REPL.set_register_thy false;
+                          output packUnit ();
+                          cin')
                      | "\005lex" => let
                                val (src, cin'') = doUnpack unpackString cin'
                                val rets = REPL.lex_commands (!cfg) src

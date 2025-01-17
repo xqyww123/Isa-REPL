@@ -22,6 +22,7 @@ addr   = sys.argv[1]
 target = sys.argv[2]
 
 c = Client(addr, 'HOL')
+c.set_register_thy (False)
 
 session = c.session_name_of (target)
 if session:

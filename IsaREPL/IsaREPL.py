@@ -110,7 +110,16 @@ class Client:
         You can set the `trace` to false to disable the collection of the outputs,
         which speeds up the REPL a lot.
         """
+        if not isinstance(trace, bool):
+            raise ValueError("the argument trace must be a string")
         mp.pack ("\x05trace" if trace else "\x05notrace", self.cout)
+        self.cout.flush()
+        Client.__parse_control__(self.unpack.unpack())
+
+    def set_register_thy (self, value):
+        if not isinstance(value, bool):
+            raise ValueError("the argument value must be a string")
+        mp.pack ("\x05register_thy" if value else "\x05no_register_thy", self.cout)
         self.cout.flush()
         Client.__parse_control__(self.unpack.unpack())
 
