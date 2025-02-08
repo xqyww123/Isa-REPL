@@ -6,12 +6,11 @@ type message = message_type * string
 type collector = {current_command: Command_Span.span,
                   state: Toplevel.state, (*the state after executing the current command*)
                   remaining: (Toplevel.transition * Command_Span.span) list
-                                         (*the remaining code within the same theory*)}
+                                         (*the remaining code within the same theory file*)}
               -> MessagePackBinIO.Pack.raw_packer option *
                  Toplevel.state option
 type plugin_name = string
 type plugin  = plugin_name * collector
-type plugins = plugin list
 
 type flags = {
         is_toplevel: bool,
@@ -36,6 +35,7 @@ type command_outputs = {
 exception REPL_fail of string
 
 type Session_ID = int
+   (*initialize the current thread as a repl worker*)
 val init_repler : Session_ID -> theory option -> unit
 type cfg = {base_dir: Path.T, thy_qualifier: string}
 val RE : cfg -> string -> command_outputs
