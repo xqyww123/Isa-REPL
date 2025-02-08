@@ -89,8 +89,6 @@ fun compile_ML ctxt source =
   end
 
 
-val session_ID_counter = Counter.make ()
-
 val servers = Synchronized.var "REPL Servers" (Symtab.empty : Thread.thread Symtab.table)
 
 fun startup base_dir_of_theories thy0 addr0 =
@@ -131,13 +129,6 @@ fun startup base_dir_of_theories thy0 addr0 =
       let val (conn,sender) = Socket.accept socket
           val (cin, cout) = make_streams conn
 
-          val wid = session_ID_counter ()
-          val base_dir = Path.append base_dir_of_theories (Path.basic (string_of_int wid))
-          val _ = if File.is_dir base_dir
-                  then ()
-                  else ( if File.exists base_dir then File.rm base_dir else ();
-                         OS.FileSys.mkDir (File.platform_path base_dir) )
-
           val (version, cin) = MessagePackBinIO.Unpack.doUnpack
                                           (MessagePackBinIO.Unpack.unpackString) cin
           val _ = if version = "0.8.0" then ()
@@ -151,7 +142,7 @@ fun startup base_dir_of_theories thy0 addr0 =
                                    then "HOL"
                                    else default_session
                               else thy_qualifier
-          val cfg = Unsynchronized.ref {base_dir=base_dir, thy_qualifier=thy_qualifier}
+          val cfg = Unsynchronized.ref {thy_qualifier=thy_qualifier}
 
           fun loop cin =
             if BinIO.StreamIO.endOfStream cin
@@ -256,8 +247,8 @@ fun startup base_dir_of_theories thy0 addr0 =
                            end
                      | "\005qualifier" => let
                                val (qualifier, cin'') = doUnpack unpackString cin'
-                               val {base_dir, ...} = !cfg
-                               val _ = cfg := {base_dir=base_dir, thy_qualifier=qualifier}
+                               (*val {base_dir, ...} = !cfg *)
+                               val _ = cfg := {thy_qualifier=qualifier}
                                val _ = output packUnit ()
                             in cin''
                            end
@@ -284,7 +275,7 @@ fun startup base_dir_of_theories thy0 addr0 =
              in loop cin'
             end
        in Isabelle_Thread.fork {name="REPL-worker", stack_limit=NONE, interrupts=true}
-                               (fn () => ( REPL.init_repler wid thy0
+                               (fn () => ( REPL.init_repler base_dir_of_theories thy0
                                          ; loop cin ))
       end
       handle E => (
