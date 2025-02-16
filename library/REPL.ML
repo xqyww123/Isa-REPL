@@ -97,6 +97,13 @@ val origin_writeln : string list -> unit
 val origin_tracing : string list -> unit
 val origin_warning : string list -> unit
 
+(* Library Control *)
+
+    (*additional imports that will be injected into every evaluation target*)
+val additional_lib : string list Thread_Data.var
+val evaluated_theories : theory Symtab.table Thread_Data.var
+val add_evaluated_theories : string * theory -> unit
+
 end
 
 structure REPL : REPL = struct
@@ -234,7 +241,7 @@ val state = Thread_Data.var () : (Toplevel.state * counter * (trace * register_t
 val Pure = Theory.get_pure ()
 val pure_keywords = Thy_Header.get_keywords Pure
 
-val evaluated_theories = Thread_Data.var () : theory Symtab.table Thread_Data.var
+val evaluated_theories = Thread_Data.var ()
 (* val global_loaded_theories = Synchronized.var "REPL loaded theories" Symtab.empty *)
 
 exception REPL_fail of string
@@ -291,6 +298,14 @@ fun thy_loader thy_qualifier targets =
    in map load' targets
   end
 
+fun add_evaluated_theories entry =
+  let val store  = the_default Symtab.empty (Thread_Data.get evaluated_theories)
+      val store' = Symtab.update entry store
+   in Thread_Data.put evaluated_theories (SOME store')
+  end
+
+val additional_lib = Thread_Data.var ()
+
 fun init_thy ignore_imports (base_dir, {thy_qualifier}) source =
   let val toks = Token.tokenize pure_keywords {strict = false} source
       val i = find_index is_theory_tok toks
@@ -307,6 +322,7 @@ fun init_thy ignore_imports (base_dir, {thy_qualifier}) source =
 
       (* init theory *)
       val imports = #imports header
+                  @ map (rpair Position.none) (these (Thread_Data.get additional_lib))
       val evaluated_theories = the_default Symtab.empty (Thread_Data.get evaluated_theories)
       val _ = if Symtab.defined evaluated_theories (#1 sname)
               then raise REPL_fail ("Theory " ^ #1 sname ^ " has been defined.")
