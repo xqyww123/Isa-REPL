@@ -29,7 +29,7 @@ Read the docstring of `Client.plugin` for more details.
 """)
 
 # This plugin collects all variables in a proof state.
-c.plugin ("VARS", """
+c.plugin ("HOL.Main", "VARS", """
 let open MessagePackBinIO.Pack
     fun packType ctxt = packString o REPL.trim_makrup o Syntax.string_of_typ ctxt
     fun collect_vars s =
@@ -40,7 +40,7 @@ let open MessagePackBinIO.Pack
             val vars = Term.add_frees (Thm.prop_of goal) []
          in packPairList (packString, packType ctxt) vars
         end
- in fn s => (
+ in fn {state=s,...} => (
         (if Toplevel.is_proof s then SOME (collect_vars s) else NONE),
         NONE) (*this plugin doesn't alter teh evaluation state*)
 end

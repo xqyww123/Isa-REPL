@@ -8,7 +8,7 @@ class Client:
     A client for connecting Isabelle REPL
     """
 
-    VERSION = '0.8.0'
+    VERSION = '0.9.0'
     def __init__(self, addr, thy_qualifier):
         """
         Create a client and connect it to `addr`.
@@ -139,7 +139,7 @@ class Client:
         self.cout.flush()
         return Client.__parse_control__(self.unpack.unpack())
 
-    def plugin (self, name, ML):
+    def plugin (self, thy, name, ML):
         """
         Isa-REPL allows clients to insert user-specific plugins to collect data
         directly from Isabelle's internal representations about proof states, lemma
@@ -183,14 +183,18 @@ class Client:
         `new_state` allows you to alter the evaluation state. Set `new_state` to NONE if you
         do not want to change the state.
         """
+        if not isinstance(thy, str):
+            raise ValueError("the argument thy must be a string")
         if not isinstance(name, str):
             raise ValueError("the argument name must be a string")
         if not isinstance(ML, str):
             raise ValueError("the argument ML must be a string")
         mp.pack ("\x05plugin", self.cout)
-        mp.pack ([name, ML], self.cout)
+        mp.pack (thy, self.cout)
+        mp.pack (name, self.cout)
+        mp.pack (ML, self.cout)
         self.cout.flush()
-        Client.__parse_control__(self.unpack.unpack())
+        return Client.__parse_control__(self.unpack.unpack())
 
     def unplugin (self, name):
         """
@@ -332,7 +336,7 @@ class Client:
         Example: `declare [[REPL_sledgehammer_params = "provers = \\"cvc4 e spass vampire\\", minimize = false, max_proofs = 10"]]`
         Note: use *SINGLE* backslash in the code to be evaluated.
 
-        This sledgehammer process is smart and will only return the first encountered successful proofs.
+        This sledgehammer process is smart and will only return the first encoutered successful proofs.
         It pre-play every reported proof to test if it could be finish within a time limit. If not,
         it will not considered as a successful proof and be discarded; otherwise, the proof is returned
         immediately killing all other parallel attempts.
@@ -442,4 +446,70 @@ class Client:
         mp.pack (path, self.cout)
         self.cout.flush ()
         return Client.__parse_control__ (self.unpack.unpack())
+
+    def run_app (self, name):
+        """
+        Run user-defined applications.
+        An application is an ML program registered through `REPL_Server.register_app`.
+        It takes over the control of the in- and the out-socket stream, permitting the user
+        to do anything he wants.
+        """
+        if not isinstance(name, str):
+            raise ValueError("the argument `name` must be a string")
+        mp.pack ("\x05app", self.cout)
+        mp.pack (name, self.cout)
+        self.cout.flush ()
+        found = Client.__parse_control__ (self.unpack.unpack())
+        print (found)
+        if not found:
+            raise KeyError
+        return None
+
+    def run_ML (self, thy, src):
+        """
+        Execute ML code in the global state of the Isabelle runtime.
+        """
+        if not isinstance(thy, str):
+            raise ValueError("the argument `thy` must be a string")
+        if not isinstance(src, str):
+            raise ValueError("the argument `src` must be a string")
+        mp.pack ("\x05ML", self.cout)
+        mp.pack ((thy,src), self.cout)
+        self.cout.flush ()
+        Client.__parse_control__ (self.unpack.unpack())
+        return None
+
+    def load_theory (self, targets, thy_qualifier=""):
+        """
+        Load theories. Short names can be used if the thy_qualifier is indicated.
+        Otherwise, full names must be used.
+        The target theories to be loaded must be registered to the Isabelle system
+        through the `isabelle component -u` commands.
+        The method returns the full names of the loaded theories.
+        """
+        if not isinstance(thy_qualifier, str):
+            raise ValueError("the argument `thy_qualifier` must be a string")
+        def is_list_of_strings(lst):
+            if lst and isinstance(lst, list):
+                return all(isinstance(elem, str) for elem in lst)
+            else:
+                return False
+        if not is_list_of_strings (targets):
+            raise ValueError("the argument `targets` must be a list of strings")
+        mp.pack ("\x05load", self.cout)
+        mp.pack ((thy_qualifier, targets), self.cout)
+        self.cout.flush ()
+        return Client.__parse_control__ (self.unpack.unpack())
+
+    def eval_file (self, path):
+        """
+        Evaluate the file at the given path.
+        This method has the same return as the `eval` method.
+        """
+        if not isinstance(path, str):
+            raise ValueError("the argument `path` must be a string")
+        mp.pack ("\x05eval", self.cout)
+        mp.pack (path, self.cout)
+        self.cout.flush ()
+        return self.unpack.unpack()
 

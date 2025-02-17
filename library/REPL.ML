@@ -38,11 +38,13 @@ type Session_ID = int
    (*initialize the current thread as a repl worker*)
 val init_repler : Path.T (*base_dir used to store outputs*)
                -> theory option -> unit
-type cfg = {thy_qualifier: string}
+type cfg = { thy_qualifier : string, file : string option, position_label : string option }
 val RE : cfg -> string -> command_outputs
 val lex_commands : cfg -> string -> string list
+
 val set_trace : bool -> unit
 val set_register_thy : bool -> unit
+val thy_loader : string -> string list -> theory list
 
 (* Plugin *)
 
@@ -103,6 +105,7 @@ val origin_warning : string list -> unit
 val additional_lib : string list Thread_Data.var
 val evaluated_theories : theory Symtab.table Thread_Data.var
 val add_evaluated_theories : string * theory -> unit
+val add_global_theories : string * theory -> unit
 
 end
 
@@ -137,7 +140,7 @@ type collector = {current_command: Command_Span.span,
 type plugin_name = string
 type plugin  = plugin_name * collector
 type plugins = plugin list
-type cfg = {thy_qualifier: string}
+type cfg = { thy_qualifier : string, file : string option, position_label : string option }
 
 type command_output = {
         command_name : string,
@@ -242,7 +245,7 @@ val Pure = Theory.get_pure ()
 val pure_keywords = Thy_Header.get_keywords Pure
 
 val evaluated_theories = Thread_Data.var ()
-(* val global_loaded_theories = Synchronized.var "REPL loaded theories" Symtab.empty *)
+val global_theories = Synchronized.var "global_theories" Symtab.empty
 
 exception REPL_fail of string
 
@@ -258,7 +261,8 @@ fun thy_loader thy_qualifier targets =
       val can_load = Execution.is_running Document_ID.none
       fun is_loaded import =
           Symtab.defined evaluated_theories import orelse
-          is_some (Thy_Info.lookup_theory import)
+          is_some (Thy_Info.lookup_theory import) orelse
+          Symtab.defined (Synchronized.value global_theories) import
 
       val _ = Synchronized.change load_targets (fn ex =>
         let val not_loaded = filter_out is_loaded targets
@@ -293,6 +297,9 @@ fun thy_loader thy_qualifier targets =
         case Thy_Info.lookup_theory import
           of SOME thy => thy
            | NONE     =>
+        case Symtab.lookup (Synchronized.value global_theories) import
+          of SOME thy => thy
+           | NONE =>
          raise REPL_fail ("Bad theory import " ^ import)
         )
    in map load' targets
@@ -304,9 +311,12 @@ fun add_evaluated_theories entry =
    in Thread_Data.put evaluated_theories (SOME store')
   end
 
+fun add_global_theories entry =
+  Synchronized.change global_theories (Symtab.update entry)
+
 val additional_lib = Thread_Data.var ()
 
-fun init_thy ignore_imports (base_dir, {thy_qualifier}) source =
+fun init_thy ignore_imports (base_dir, {thy_qualifier,...}) source =
   let val toks = Token.tokenize pure_keywords {strict = false} source
       val i = find_index is_theory_tok toks
    in if i = ~1
@@ -418,7 +428,11 @@ fun RE cfg source : command_outputs =
     of NONE                => {outputs=NONE, error=SOME "INTERNAL ERROR: worker ID lost"}
      | SOME (wid, base_dir, plugins) =>
   let val pos = Position.make {
-                  line=1, offset=1, end_offset=1, props={label="", file="#REPL", id=string_of_int cnt}}
+                  line=1, offset=1, end_offset=1,
+                  props= { label = the_default "" (#position_label cfg),
+                           file = the_default "#REPL" (#file cfg),
+                           id=string_of_int cnt }
+                }
       val srcs = Symbol_Pos.explode (source, pos)
               |> split_thy_headers
 

@@ -5,14 +5,47 @@ type address = string (*IP address:port*)
 val startup : Path.T -> theory option -> address -> Thread.thread
 val kill_server : address -> unit
 
+type App = (BinIO.StreamIO.instream * BinIO.StreamIO.outstream) -> BinIO.StreamIO.instream
+val register_app : string -> App -> unit
+val app_of : string -> App option
+
+val socket_in_of  : unit -> BinIO.StreamIO.instream
+val socket_out_of : unit -> BinIO.StreamIO.outstream
+
 end
 
 val REPL_ML_sender_DO_NOT_OVERRIDE_ : REPL.collector option Unsynchronized.ref
+      = Unsynchronized.ref NONE
+val REPL_ML_sender2_DO_NOT_OVERRIDE_ : (unit -> unit) option Unsynchronized.ref
       = Unsynchronized.ref NONE
 val REPL_ML_sender_DO_NOT_OVERRIDE_locker_
       = Synchronized.var "REPL_ML_sender_DO_NOT_OVERRIDE_locker_" ()
 
 structure REPL_Server : REPL_SEVER = struct
+
+(* App *)
+
+type App = (BinIO.StreamIO.instream * BinIO.StreamIO.outstream) -> BinIO.StreamIO.instream
+val apps = Thread_Data.var () : App Symtab.table Unsynchronized.ref Thread_Data.var
+
+fun app_of name =
+  case Thread_Data.get apps
+    of SOME apps => Symtab.lookup (!apps) name
+     | NONE => NONE
+
+fun register_app name app =
+  let val apps = case Thread_Data.get apps
+                   of SOME rf => rf
+                    | NONE => let val rf = Unsynchronized.ref Symtab.empty
+                               in Thread_Data.put apps (SOME rf)
+                                ; rf
+                              end
+   in apps := Symtab.update (name, app) (!apps)
+  end
+
+val sockets = Thread_Data.var ()
+fun socket_in_of  () = the (Thread_Data.get sockets) |> fst
+fun socket_out_of () = the (Thread_Data.get sockets) |> snd
 
 (* Server *)
 
@@ -71,9 +104,9 @@ fun make_streams socket =
 
   in (in_stream, out_stream) end
 
-fun compile_ML ctxt source =
+fun compile_plugin ctxt source =
   let val pos = Position.make {
-              line=1, offset=1, end_offset=1, props={label="", file="#REPL-ML", id=""}}
+              line=1, offset=1, end_offset=1, props={label="", file="#REPL", id=""}}
       val ret : REPL.collector option Unsynchronized.ref = Unsynchronized.ref NONE
    in Synchronized.change REPL_ML_sender_DO_NOT_OVERRIDE_locker_ (fn () => (
 
@@ -89,6 +122,23 @@ fun compile_ML ctxt source =
   end
 
 
+fun run_ML ctxt source =
+  let val pos = Position.make {
+              line=1, offset=1, end_offset=1, props={label="", file="#REPL-ML", id=""}}
+      val ret = Unsynchronized.ref NONE
+   in Synchronized.change REPL_ML_sender_DO_NOT_OVERRIDE_locker_ (fn () => (
+        ML_Context.expression pos (
+            ML_Lex.read "REPL_ML_sender2_DO_NOT_OVERRIDE_ := SOME (fn () => (" @
+            ML_Lex.read source @
+            ML_Lex.read "))"
+          ) ctxt ;
+        ret := ! REPL_ML_sender2_DO_NOT_OVERRIDE_ ;
+        REPL_ML_sender2_DO_NOT_OVERRIDE_ := NONE
+      ))
+    ; the (!ret) ()
+  end
+
+
 val servers = Synchronized.var "REPL Servers" (Symtab.empty : Thread.thread Symtab.table)
 
 fun startup base_dir_of_theories thy0 addr0 =
@@ -99,9 +149,6 @@ fun startup base_dir_of_theories thy0 addr0 =
               else OS.FileSys.mkDir (File.standard_path base_dir_of_theories)
 
       val default_session = getenv "REPL_DEFAULT_SESSION"
-
-      val ctxt = case thy0 of SOME some => Context.Theory some
-                            | NONE => Context.the_generic_context ()
 
       val socket: Socket.passive INetSock.stream_sock = INetSock.TCP.socket ()
       val _ = Socket.Ctl.setREUSEADDR (socket, true)
@@ -131,9 +178,9 @@ fun startup base_dir_of_theories thy0 addr0 =
 
           val (version, cin) = MessagePackBinIO.Unpack.doUnpack
                                           (MessagePackBinIO.Unpack.unpackString) cin
-          val _ = if version = "0.8.0" then ()
+          val _ = if version = "0.9.0" then ()
                   else error "The server is connected with a wrong version of the client.\n\
-                             \Please run `pip install \"IsaREPL==0.8.0\" --force-reinstall` to update your client."
+                             \Please run `pip install \"IsaREPL==0.9.0\" --force-reinstall` to update your client."
 
           val (thy_qualifier, cin) = MessagePackBinIO.Unpack.doUnpack
                                           (MessagePackBinIO.Unpack.unpackString) cin
@@ -142,7 +189,9 @@ fun startup base_dir_of_theories thy0 addr0 =
                                    then "HOL"
                                    else default_session
                               else thy_qualifier
-          val cfg = Unsynchronized.ref {thy_qualifier=thy_qualifier}
+          val cfg = Unsynchronized.ref { thy_qualifier = thy_qualifier,
+                                         file = NONE,
+                                         position_label = NONE }
 
           fun loop cin =
             if BinIO.StreamIO.endOfStream cin
@@ -178,8 +227,11 @@ fun startup base_dir_of_theories thy0 addr0 =
                             in cin''
                            end
                      | "\005plugin" => let
-                               val ((name, src), cin'') = doUnpack (unpackPair (unpackString, unpackString)) cin'
-                               val plugin = (name, compile_ML ctxt src)
+                               val (thy, cin'') = doUnpack unpackString cin'
+                               val (name, cin'') = doUnpack unpackString cin''
+                               val (src, cin'') = doUnpack unpackString cin''
+                               val [thy] = REPL.thy_loader "HOL" [thy]
+                               val plugin = (name, compile_plugin (Context.Theory thy) src)
                                val _ = REPL.register_plugin plugin
                                val _ = output packUnit ()
                             in cin''
@@ -248,7 +300,9 @@ fun startup base_dir_of_theories thy0 addr0 =
                      | "\005qualifier" => let
                                val (qualifier, cin'') = doUnpack unpackString cin'
                                (*val {base_dir, ...} = !cfg *)
-                               val _ = cfg := {thy_qualifier=qualifier}
+                               val _ = cfg := { thy_qualifier=qualifier,
+                                                file = #file (!cfg),
+                                                position_label = #position_label (!cfg) }
                                val _ = output packUnit ()
                             in cin''
                            end
@@ -257,6 +311,43 @@ fun startup base_dir_of_theories thy0 addr0 =
                                val session = REPL_Aux.parse_session_name (Path.explode path)
                                val _ = output (packOption packString) session
                             in cin''
+                           end
+                     | "\005app" => let
+                               val (name, cin'') = doUnpack unpackString cin'
+                            in case app_of name
+                            of NONE => (output packBool false; cin'')
+                             | SOME app => (
+                                  output packBool true
+                                ; BinIO.StreamIO.flushOut cout
+                                ; app (cin'', cout))
+                           end
+                     | "\005ML" => let
+                               val ((thy,src), cin'') = doUnpack (unpackPair (unpackString,unpackString)) cin'
+                               val [thy] = REPL.thy_loader "HOL" [thy]
+                            in run_ML (Context.Theory thy) src
+                             ; output packBool true
+                             ; cin''
+                           end
+                     | "\005load" => let
+                               val ((thy_qualifier, targets), cin'') =
+                                    doUnpack (unpackPair (unpackString, unpackList unpackString)) cin'
+                               val thys = REPL.thy_loader thy_qualifier targets
+                            in output (packList packString) (map Context.theory_long_name thys)
+                             ; cin''
+                           end
+                     | "\005eval" => let
+                               val (raw_path, cin'') = doUnpack unpackString cin'
+                               val path = Path.explode raw_path
+                               val session = REPL_Aux.parse_session_name path
+                               val cfg = case session
+                                           of SOME s => { thy_qualifier = s,
+                                                          file = SOME raw_path,
+                                                          position_label = NONE }
+                                            | _ => !cfg
+                               val src = File.read path
+                               val ret = REPL.RE cfg src
+                            in doPack REPL_Serialize.command_outputs_packer ret cout
+                             ; cin''
                            end
                     end handle REPL.REPL_fail E => (
                            doPack ( packPair (packUnit, packString)) ((), E) cout ;
@@ -276,6 +367,7 @@ fun startup base_dir_of_theories thy0 addr0 =
             end
        in Isabelle_Thread.fork {name="REPL-worker", stack_limit=NONE, interrupts=true}
                                (fn () => ( REPL.init_repler base_dir_of_theories thy0
+                                         ; Thread_Data.put sockets (SOME (cin, cout))
                                          ; loop cin ))
       end
       handle E => (
