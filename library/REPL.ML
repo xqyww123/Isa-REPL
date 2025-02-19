@@ -88,6 +88,7 @@ type context = {
   goals      : cterm list
 }
 
+val get_toplevel_state : unit -> Toplevel.state
 val get_context : unit -> context
 val get_ctxt : unit -> Proof.context
 
@@ -678,11 +679,14 @@ type context = {
   goals      : cterm list
 }
 
-fun get_context () =
+fun get_toplevel_state () =
   case Thread_Data.get state
     of NONE           => raise REPL_fail  "INTERNAL ERROR: state lost"
-     | SOME (s,_,_,_) => (
-  case (try Toplevel.context_of s, try Toplevel.proof_of s)
+     | SOME (s,_,_,_) => s
+
+fun get_context () =
+  let val s = get_toplevel_state ()
+   in case (try Toplevel.context_of s, try Toplevel.proof_of s)
     of (SOME ctxt, prfstate) =>
       let
         val facts = Proof_Context.facts_of ctxt
@@ -705,7 +709,8 @@ fun get_context () =
            goals = (case prfstate of NONE => []
                        | SOME s => Thm.cprems_of (#goal (Proof.goal s)) )}
       end
-     | (NONE, _) => raise REPL_fail "Not in a proof context." )
+     | (NONE, _) => raise REPL_fail "Not in a proof context."
+  end
 
 fun get_ctxt () =
   case Thread_Data.get state

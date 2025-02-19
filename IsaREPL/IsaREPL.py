@@ -97,7 +97,7 @@ class Client:
         self.cout.flush()
         return self.unpack.unpack()
 
-    def __parse_control__(ret):
+    def _parse_control_(ret):
         if ret[1] is None:
             return ret[0]
         else:
@@ -114,14 +114,14 @@ class Client:
             raise ValueError("the argument trace must be a string")
         mp.pack ("\x05trace" if trace else "\x05notrace", self.cout)
         self.cout.flush()
-        Client.__parse_control__(self.unpack.unpack())
+        Client._parse_control_(self.unpack.unpack())
 
     def set_register_thy (self, value):
         if not isinstance(value, bool):
             raise ValueError("the argument value must be a string")
         mp.pack ("\x05register_thy" if value else "\x05no_register_thy", self.cout)
         self.cout.flush()
-        Client.__parse_control__(self.unpack.unpack())
+        Client._parse_control_(self.unpack.unpack())
 
     def lex (self, source):
         """
@@ -137,7 +137,7 @@ class Client:
         mp.pack ("\x05lex", self.cout)
         mp.pack (source, self.cout)
         self.cout.flush()
-        return Client.__parse_control__(self.unpack.unpack())
+        return Client._parse_control_(self.unpack.unpack())
 
     def plugin (self, thy, name, ML):
         """
@@ -194,7 +194,7 @@ class Client:
         mp.pack (name, self.cout)
         mp.pack (ML, self.cout)
         self.cout.flush()
-        return Client.__parse_control__(self.unpack.unpack())
+        return Client._parse_control_(self.unpack.unpack())
 
     def unplugin (self, name):
         """
@@ -207,7 +207,7 @@ class Client:
         mp.pack ("\x05unplugin", self.cout)
         mp.pack (name, self.cout)
         self.cout.flush()
-        Client.__parse_control__(self.unpack.unpack())
+        Client._parse_control_(self.unpack.unpack())
 
 
     def parse_output(output):
@@ -278,7 +278,7 @@ class Client:
         mp.pack ("\x05record", self.cout)
         mp.pack (name, self.cout)
         self.cout.flush()
-        Client.__parse_control__(self.unpack.unpack())
+        Client._parse_control_(self.unpack.unpack())
 
     def clean_history (self):
         """
@@ -286,7 +286,7 @@ class Client:
         """
         mp.pack ("\x05clean_history", self.cout)
         self.cout.flush()
-        Client.__parse_control__(self.unpack.unpack())
+        Client._parse_control_(self.unpack.unpack())
 
     def rollback (self, name):
         """
@@ -301,7 +301,7 @@ class Client:
         mp.pack ("\x05rollback", self.cout)
         mp.pack (name, self.cout)
         self.cout.flush()
-        return Client.__parse_control__(self.unpack.unpack())
+        return Client._parse_control_(self.unpack.unpack())
 
     def history (self):
         """
@@ -313,7 +313,7 @@ class Client:
         """
         mp.pack ("\x05history", self.cout)
         self.cout.flush()
-        return Client.__parse_control__(self.unpack.unpack())
+        return Client._parse_control_(self.unpack.unpack())
 
     def silly_rollback (self, name):
         return Client.parse_output (self.rollback (name))
@@ -349,7 +349,7 @@ class Client:
         mp.pack ("\x05hammer", self.cout)
         mp.pack (timeout, self.cout)
         self.cout.flush()
-        return Client.__parse_control__(self.unpack.unpack())
+        return Client._parse_control_(self.unpack.unpack())
 
     def context (self, s_expr):
         """
@@ -365,7 +365,7 @@ class Client:
         mp.pack ("\x05context", self.cout)
         mp.pack (s_expr, self.cout)
         self.cout.flush ()
-        return Client.__parse_control__(self.unpack.unpack())
+        return Client._parse_control_(self.unpack.unpack())
 
     def parse_ctxt (raw):
         return {
@@ -393,7 +393,7 @@ class Client:
         mp.pack ("\x05sexpr_term", self.cout)
         mp.pack (term, self.cout)
         self.cout.flush()
-        return Client.__parse_control__ (self.unpack.unpack())
+        return Client._parse_control_ (self.unpack.unpack())
 
     def fact (self, names):
         """
@@ -408,7 +408,7 @@ class Client:
         mp.pack ("\x05fact", self.cout)
         mp.pack (names, self.cout)
         self.cout.flush()
-        return Client.__parse_control__ (self.unpack.unpack())
+        return Client._parse_control_ (self.unpack.unpack())
 
     def sexpr_fact (self, names):
         """
@@ -419,7 +419,7 @@ class Client:
         mp.pack ("\x05sexpr_fact", self.cout)
         mp.pack (names, self.cout)
         self.cout.flush()
-        return Client.__parse_control__ (self.unpack.unpack())
+        return Client._parse_control_ (self.unpack.unpack())
 
     def set_thy_qualifier (self, thy_qualifier):
         """
@@ -432,7 +432,7 @@ class Client:
         mp.pack ("\x05qualifier", self.cout)
         mp.pack (thy_qualifier, self.cout)
         self.cout.flush ()
-        return Client.__parse_control__ (self.unpack.unpack())
+        return Client._parse_control_ (self.unpack.unpack())
 
     def session_name_of (self, path):
         """
@@ -445,7 +445,7 @@ class Client:
         mp.pack ("\x05session-of", self.cout)
         mp.pack (path, self.cout)
         self.cout.flush ()
-        return Client.__parse_control__ (self.unpack.unpack())
+        return Client._parse_control_ (self.unpack.unpack())
 
     def run_app (self, name):
         """
@@ -459,7 +459,7 @@ class Client:
         mp.pack ("\x05app", self.cout)
         mp.pack (name, self.cout)
         self.cout.flush ()
-        found = Client.__parse_control__ (self.unpack.unpack())
+        found = Client._parse_control_ (self.unpack.unpack())
         print (found)
         if not found:
             raise KeyError
@@ -476,7 +476,7 @@ class Client:
         mp.pack ("\x05ML", self.cout)
         mp.pack ((thy,src), self.cout)
         self.cout.flush ()
-        Client.__parse_control__ (self.unpack.unpack())
+        Client._parse_control_ (self.unpack.unpack())
         return None
 
     def load_theory (self, targets, thy_qualifier=""):
@@ -499,7 +499,7 @@ class Client:
         mp.pack ("\x05load", self.cout)
         mp.pack ((thy_qualifier, targets), self.cout)
         self.cout.flush ()
-        return Client.__parse_control__ (self.unpack.unpack())
+        return Client._parse_control_ (self.unpack.unpack())
 
     def eval_file (self, path):
         """
