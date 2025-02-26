@@ -40,7 +40,7 @@ def echo_eval (src):
 
 echo_eval("""
 theory HHH
-  imports Main 
+  imports Main Auto_Sledgehammer.Auto_Sledgehammer
 begin
 definition "ONE = (1::nat)"
 """)

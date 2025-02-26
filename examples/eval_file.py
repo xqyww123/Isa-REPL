@@ -26,16 +26,16 @@ c.set_register_thy (False) # preventing the REPL to reigster he evaluated theori
                 # to the Isabelle system. This suppresses the `duplicate exports`
                 # errors.
 
-c.set_trace (False) # I disable the tracing for speeding up the evaluation
-                    # Consequently, all c.eval(..)[0] will be None
+# c.set_trace (False) # You could uncomment this line to disable the tracing
+                      # and to speed up the evaluation.
+#                     # Consequently, the later `ret` will be None
 
 def is_empty(obj):
     return obj == [] or obj == ""
 
 ret = c.eval_file (target)
-if not is_empty(ret[1]) and not ret[1] is None:
-    print(ret[1])
-    exit(1)
+print ('result:')
+print(ret)
 
 print("success")
 exit(0)

@@ -148,7 +148,9 @@ local open MessagePackBinIO.Unpack MessagePackBinIO.Pack in
 fun output_err cout s =
   doPack (packPair (packUnit, packString))
                              ((), REPL.trim_makrup s) cout
-fun output cout pack x = doPack (packPair (pack, packUnit)) (x, ()) cout
+fun output cout pack x = (
+    doPack (packPair (pack, packUnit)) (x, ()) cout
+  )
 end
 
 fun startup base_dir_of_theories thy0 addr0 =
@@ -201,7 +203,8 @@ fun startup base_dir_of_theories thy0 addr0 =
                               else thy_qualifier
           val cfg = Unsynchronized.ref { thy_qualifier = thy_qualifier,
                                          file = NONE,
-                                         position_label = NONE }
+                                         position_label = NONE,
+                                         additional_libs = [] }
 
           fun loop cin =
             if BinIO.StreamIO.endOfStream cin
@@ -310,7 +313,8 @@ fun startup base_dir_of_theories thy0 addr0 =
                                (*val {base_dir, ...} = !cfg *)
                                val _ = cfg := { thy_qualifier=qualifier,
                                                 file = #file (!cfg),
-                                                position_label = #position_label (!cfg) }
+                                                position_label = #position_label (!cfg),
+                                                additional_libs = #additional_libs (!cfg)}
                                val _ = output cout packUnit ()
                             in cin''
                            end
@@ -344,17 +348,42 @@ fun startup base_dir_of_theories thy0 addr0 =
                              ; cin''
                            end
                      | "\005eval" => let
-                               val (raw_path, cin'') = doUnpack unpackString cin'
+                               val ((raw_path, pos), cin'') =
+                                      doUnpack (unpackPair (
+                                          unpackString,
+                                          unpackOption (
+                                            unpackPair (unpackInt, unpackInt))
+                                      )) cin'
                                val path = Path.explode raw_path
                                val session = REPL_Aux.parse_session_name path
                                val cfg = case session
                                            of SOME s => { thy_qualifier = s,
                                                           file = SOME raw_path,
-                                                          position_label = NONE }
+                                                          position_label = NONE,
+                                                          additional_libs = #additional_libs (!cfg)}
                                             | _ => !cfg
-                               val src = File.read path
+                               val src = case pos
+                                           of NONE => File.read path
+                                            | SOME (l,n) => let
+                                                   val lns = File.read_lines path
+                                                   fun take 0 (s::_) = [String.substring (s, 0, n)]
+                                                     | take 0 [] = []
+                                                     | take n (s::L) = s :: take (n-1) L
+                                                     | take _ _ = raise General.Subscript
+                                                in take (l-1) lns
+                                                |> String.concatWith "\n"
+                                               end
                                val ret = REPL.RE cfg src
                             in doPack REPL_Serialize.command_outputs_packer ret cout
+                             ; cin''
+                           end
+                     | "\005addlibs" => let
+                               val (libs, cin'') = doUnpack (unpackList unpackString) cin'
+                            in cfg := { thy_qualifier = #thy_qualifier (!cfg),
+                                        file = #file (!cfg),
+                                        position_label = #position_label (!cfg),
+                                        additional_libs = merge (op =) (#additional_libs (!cfg), libs) }
+                             ; output cout packUnit ()
                              ; cin''
                            end
                     end handle REPL.REPL_fail E => (

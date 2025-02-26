@@ -3,12 +3,20 @@ import socket
 
 REPLFail = type('REPLFail', (Exception,), {})
 
+def is_list_of_strings(lst):
+    if lst and isinstance(lst, list):
+        return all(isinstance(elem, str) for elem in lst)
+    else:
+        return False
+
+
 class Client:
     """
     A client for connecting Isabelle REPL
     """
 
     VERSION = '0.9.0'
+
     def __init__(self, addr, thy_qualifier):
         """
         Create a client and connect it to `addr`.
@@ -44,12 +52,12 @@ class Client:
             host, port = address.split(':')
             return (host, int(port))
 
-        self.sock  = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         host, port = parse_address(addr)
-        self.sock.connect((host,port))
-        self.cout  = self.sock.makefile('wb')
-        self.cin   = self.sock.makefile('rb', buffering=0)
-        self.unpack= mp.Unpacker(self.cin)
+        self.sock.connect((host, port))
+        self.cout = self.sock.makefile('wb')
+        self.cin = self.sock.makefile('rb', buffering=0)
+        self.unpack = mp.Unpacker(self.cin)
 
         mp.pack(Client.VERSION, self.cout)
         mp.pack(thy_qualifier, self.cout)
@@ -103,7 +111,7 @@ class Client:
         else:
             raise REPLFail(ret[1])
 
-    def set_trace (self, trace):
+    def set_trace(self, trace):
         """
         By default, Isabelle REPL will collect all the output of every command,
         which causes the evaluation very slow.
@@ -112,18 +120,18 @@ class Client:
         """
         if not isinstance(trace, bool):
             raise ValueError("the argument trace must be a string")
-        mp.pack ("\x05trace" if trace else "\x05notrace", self.cout)
+        mp.pack("\x05trace" if trace else "\x05notrace", self.cout)
         self.cout.flush()
         Client._parse_control_(self.unpack.unpack())
 
-    def set_register_thy (self, value):
+    def set_register_thy(self, value):
         if not isinstance(value, bool):
             raise ValueError("the argument value must be a string")
-        mp.pack ("\x05register_thy" if value else "\x05no_register_thy", self.cout)
+        mp.pack("\x05register_thy" if value else "\x05no_register_thy", self.cout)
         self.cout.flush()
         Client._parse_control_(self.unpack.unpack())
 
-    def lex (self, source):
+    def lex(self, source):
         """
         This method splits the given `source` into a sequence of code pieces.
         Each piece is a string led by the keyword of a command, and no symbol
@@ -134,12 +142,12 @@ class Client:
         """
         if not isinstance(source, str):
             raise ValueError("the argument source must be a string")
-        mp.pack ("\x05lex", self.cout)
-        mp.pack (source, self.cout)
+        mp.pack("\x05lex", self.cout)
+        mp.pack(source, self.cout)
         self.cout.flush()
         return Client._parse_control_(self.unpack.unpack())
 
-    def plugin (self, thy, name, ML):
+    def plugin(self, name, ML, thy='Isa_REPL.Isa_REPL'):
         """
         Isa-REPL allows clients to insert user-specific plugins to collect data
         directly from Isabelle's internal representations about proof states, lemma
@@ -189,14 +197,14 @@ class Client:
             raise ValueError("the argument name must be a string")
         if not isinstance(ML, str):
             raise ValueError("the argument ML must be a string")
-        mp.pack ("\x05plugin", self.cout)
-        mp.pack (thy, self.cout)
-        mp.pack (name, self.cout)
-        mp.pack (ML, self.cout)
+        mp.pack("\x05plugin", self.cout)
+        mp.pack(thy, self.cout)
+        mp.pack(name, self.cout)
+        mp.pack(ML, self.cout)
         self.cout.flush()
         return Client._parse_control_(self.unpack.unpack())
 
-    def unplugin (self, name):
+    def unplugin(self, name):
         """
         Remove an installed plugin.
         Argument `name` must be the name passed to the `plugin` method.
@@ -204,45 +212,44 @@ class Client:
         """
         if not isinstance(name, str):
             raise ValueError("the argument name must be a string")
-        mp.pack ("\x05unplugin", self.cout)
-        mp.pack (name, self.cout)
+        mp.pack("\x05unplugin", self.cout)
+        mp.pack(name, self.cout)
         self.cout.flush()
         Client._parse_control_(self.unpack.unpack())
-
 
     def parse_output(output):
         return {
             'command_name': output[0],
-            'output': [{        # The same output in Isabelle's output panel.
-                                # A list of messages.
-                'type': msg[0], # The type is an integer, which can be
-                                # 0 meaning NORMAL outputs printed by Isabelle/ML `writln`,
-                                #       which denotes usual outputs;
-                                # 1 meaning TRACING information printed by Isabelle/ML `tracing`,
-                                #       which is trivial messages used usually for debugging;
-                                # 2 meaning WARNING printed by Isabelle/ML `warning`,
-                                #       which is some warning message.
-                'content': msg[1] # A string, the output
-                } for msg in output[1]],
+            'output': [{  # The same output in Isabelle's output panel.
+                # A list of messages.
+                'type': msg[0],  # The type is an integer, which can be
+                # 0 meaning NORMAL outputs printed by Isabelle/ML `writln`,
+                #       which denotes usual outputs;
+                # 1 meaning TRACING information printed by Isabelle/ML `tracing`,
+                #       which is trivial messages used usually for debugging;
+                # 2 meaning WARNING printed by Isabelle/ML `warning`,
+                #       which is some warning message.
+                'content': msg[1]  # A string, the output
+            } for msg in output[1]],
             'latex': output[2],
-            'flags': [{                      # some Boolean flags.
-                'is_toplevel': output[3][0], # whether the Isabelle state is outside any theory block
-                                             # (the `theory XX imports AA begin ... end` block)
-                'is_theory': output[3][1],   # whether the state is within a theory block and at the
-                                             # toplevel of this block
-                'is_proof' : output[3][2]    # whether the state is working on proving some goal
-                }],
-            'level': output[4],     # The level of nesting context. It is some internal measure
-                                    # and doesn't necessarily (but still roughly) reflect the
-                                    # hiearchies of source code.
-                                    # An integer.
-            'state': output[5],     # the proof state as a string (the same content in the `State` pannel)
-                                    # A string.
-            'plugin_output': output[6], # the output of plugins
-            'errors': output[7]     # any errors raised during evaluating this single command.
-                                    # A list of strings.
-            }
-        
+            'flags': [{  # some Boolean flags.
+                'is_toplevel': output[3][0],  # whether the Isabelle state is outside any theory block
+                # (the `theory XX imports AA begin ... end` block)
+                'is_theory': output[3][1],  # whether the state is within a theory block and at the
+                # toplevel of this block
+                'is_proof': output[3][2]  # whether the state is working on proving some goal
+            }],
+            'level': output[4],  # The level of nesting context. It is some internal measure
+            # and doesn't necessarily (but still roughly) reflect the
+            # hiearchies of source code.
+            # An integer.
+            'state': output[5],  # the proof state as a string (the same content in the `State` pannel)
+            # A string.
+            'plugin_output': output[6],  # the output of plugins
+            'errors': output[7]  # any errors raised during evaluating this single command.
+            # A list of strings.
+        }
+
     def boring_parse(data):
         """
         I am boring because I just convert the form of the data representation.
@@ -251,44 +258,44 @@ class Client:
         """
         if data[0] is None:
             outputs = None
-        else: outputs = [Client.parse_output(output) for output in data[0]]
+        else:
+            outputs = [Client.parse_output(output) for output in data[0]]
         return {
-        'outputs': outputs, # A sequence of outputs each of which corresponds to one command.
-        'error': data[1]    # Either None or a string,
-                            # any error that interrtupts the evaluation process, causing the
-                            # later commands not executed.
-                            #
-                            # **No** error happens during the evaluation, **if and only if** this field is None.
-                            # However, if some error happens, this field may not provide all details.
-                            # Instead, the details can be given in `outputs['errors']`.
+            'outputs': outputs,  # A sequence of outputs each of which corresponds to one command.
+            'error': data[1]  # Either None or a string,
+            # any error that interrtupts the evaluation process, causing the
+            # later commands not executed.
+            #
+            # **No** error happens during the evaluation, **if and only if** this field is None.
+            # However, if some error happens, this field may not provide all details.
+            # Instead, the details can be given in `outputs['errors']`.
         }
 
     def silly_eval(self, source):
-        ret = (self.eval(source))
+        ret = self.eval(source)
         return Client.boring_parse(ret)
 
-
-    def record_state (self, name):
+    def record_state(self, name):
         """
         Record the current evaluation state so that later you could rollback to
         this state using name `name`.
         """
         if not isinstance(name, str):
             raise ValueError("the argument name must be a string")
-        mp.pack ("\x05record", self.cout)
-        mp.pack (name, self.cout)
+        mp.pack("\x05record", self.cout)
+        mp.pack(name, self.cout)
         self.cout.flush()
         Client._parse_control_(self.unpack.unpack())
 
-    def clean_history (self):
+    def clean_history(self):
         """
         Remove all recorded states.
         """
-        mp.pack ("\x05clean_history", self.cout)
+        mp.pack("\x05clean_history", self.cout)
         self.cout.flush()
         Client._parse_control_(self.unpack.unpack())
 
-    def rollback (self, name):
+    def rollback(self, name):
         """
         Rollback to a recorded evaluation state named `name`.
         This method returns a description about the state just restored.
@@ -298,12 +305,12 @@ class Client:
         """
         if not isinstance(name, str):
             raise ValueError("the argument name must be a string")
-        mp.pack ("\x05rollback", self.cout)
-        mp.pack (name, self.cout)
+        mp.pack("\x05rollback", self.cout)
+        mp.pack(name, self.cout)
         self.cout.flush()
         return Client._parse_control_(self.unpack.unpack())
 
-    def history (self):
+    def history(self):
         """
         Returns the names of all recorded states
         This method returns descriptions about all the recorded states.
@@ -311,17 +318,17 @@ class Client:
         However, the `command_name` fielld will be always an empty string,
         `output` be an empty list, and `latex` be NONE, because no command is executed.
         """
-        mp.pack ("\x05history", self.cout)
+        mp.pack("\x05history", self.cout)
         self.cout.flush()
         return Client._parse_control_(self.unpack.unpack())
 
-    def silly_rollback (self, name):
-        return Client.parse_output (self.rollback (name))
+    def silly_rollback(self, name):
+        return Client.parse_output(self.rollback(name))
 
-    def silly_history (self):
-        return {k: Client.parse_output(v) for k,v in self.history().items() }
+    def silly_history(self):
+        return {k: Client.parse_output(v) for k, v in self.history().items()}
 
-    def hammer (self, timeout):
+    def hammer(self, timeout):
         """
         Invoke Isabelle Sledgehammer within an indicated timeout (in seconds, and 0 means no timeout).
         Returns obtained tactic scripts if succeeds; or raises REPLFail on failure.
@@ -346,12 +353,12 @@ class Client:
         """
         if not isinstance(timeout, int):
             raise ValueError("the argument name must be an integer")
-        mp.pack ("\x05hammer", self.cout)
-        mp.pack (timeout, self.cout)
+        mp.pack("\x05hammer", self.cout)
+        mp.pack(timeout, self.cout)
         self.cout.flush()
         return Client._parse_control_(self.unpack.unpack())
 
-    def context (self, s_expr):
+    def context(self, s_expr):
         """
         Returns helpful contextual data including
             local facts, assumptions, bindings (made by `let` command), fixed term variables (and their types),
@@ -362,25 +369,25 @@ class Client:
         """
         if not isinstance(s_expr, bool):
             raise ValueError("the argument s_expr must be a boolean")
-        mp.pack ("\x05context", self.cout)
-        mp.pack (s_expr, self.cout)
-        self.cout.flush ()
+        mp.pack("\x05context", self.cout)
+        mp.pack(s_expr, self.cout)
+        self.cout.flush()
         return Client._parse_control_(self.unpack.unpack())
 
-    def parse_ctxt (raw):
+    def parse_ctxt(raw):
         return {
             'local_facts': raw[0],
             'assumptions': raw[1],
-            'bindings'   : raw[2], # {name => (typ, term)}
+            'bindings': raw[2],  # {name => (typ, term)}
             'fixed_terms': raw[3][0],
             'fixed_types': raw[3][1],
-            'goals'      : raw[4]
+            'goals': raw[4]
         }
 
-    def silly_context (self, s_expr):
+    def silly_context(self, s_expr):
         return Client.parse_ctxt(self.context(s_expr))
 
-    def sexpr_term (self, term):
+    def sexpr_term(self, term):
         """
         Parse a term and translate it into S-expression that reveals the full names
         of all overloaded notations.
@@ -390,12 +397,12 @@ class Client:
         """
         if not isinstance(term, str):
             raise ValueError("the argument term must be a string")
-        mp.pack ("\x05sexpr_term", self.cout)
-        mp.pack (term, self.cout)
+        mp.pack("\x05sexpr_term", self.cout)
+        mp.pack(term, self.cout)
         self.cout.flush()
-        return Client._parse_control_ (self.unpack.unpack())
+        return Client._parse_control_(self.unpack.unpack())
 
-    def fact (self, names):
+    def fact(self, names):
         """
         Retreive a fact like a lemma, a theorem, or a corollary.
         The argument `names` has the same syntax with the argument of Isabelle command `thm`.
@@ -405,23 +412,23 @@ class Client:
         """
         if not isinstance(names, str):
             raise ValueError("the argument `names` must be a string")
-        mp.pack ("\x05fact", self.cout)
-        mp.pack (names, self.cout)
+        mp.pack("\x05fact", self.cout)
+        mp.pack(names, self.cout)
         self.cout.flush()
-        return Client._parse_control_ (self.unpack.unpack())
+        return Client._parse_control_(self.unpack.unpack())
 
-    def sexpr_fact (self, names):
+    def sexpr_fact(self, names):
         """
         Similar with `fact` but returns the S-expressions of the terms of the facts.
         """
         if not isinstance(names, str):
             raise ValueError("the argument `names` must be a string")
-        mp.pack ("\x05sexpr_fact", self.cout)
-        mp.pack (names, self.cout)
+        mp.pack("\x05sexpr_fact", self.cout)
+        mp.pack(names, self.cout)
         self.cout.flush()
-        return Client._parse_control_ (self.unpack.unpack())
+        return Client._parse_control_(self.unpack.unpack())
 
-    def set_thy_qualifier (self, thy_qualifier):
+    def set_thy_qualifier(self, thy_qualifier):
         """
         Change `thy_qualifier`.
         See `Client.__init__` for the explaination of `thy_qualifier`
@@ -429,12 +436,12 @@ class Client:
         """
         if not isinstance(thy_qualifier, str):
             raise ValueError("the argument `thy_qualifier` must be a string")
-        mp.pack ("\x05qualifier", self.cout)
-        mp.pack (thy_qualifier, self.cout)
-        self.cout.flush ()
-        return Client._parse_control_ (self.unpack.unpack())
+        mp.pack("\x05qualifier", self.cout)
+        mp.pack(thy_qualifier, self.cout)
+        self.cout.flush()
+        return Client._parse_control_(self.unpack.unpack())
 
-    def session_name_of (self, path):
+    def session_name_of(self, path):
         """
         Given a `path` to an Isabelle theory file, `session_name_of` returns
         the name of the session containing the theory file, or None if fails
@@ -442,12 +449,12 @@ class Client:
         """
         if not isinstance(path, str):
             raise ValueError("the argument `path` must be a string")
-        mp.pack ("\x05session-of", self.cout)
-        mp.pack (path, self.cout)
-        self.cout.flush ()
-        return Client._parse_control_ (self.unpack.unpack())
+        mp.pack("\x05session-of", self.cout)
+        mp.pack(path, self.cout)
+        self.cout.flush()
+        return Client._parse_control_(self.unpack.unpack())
 
-    def run_app (self, name):
+    def run_app(self, name):
         """
         Run user-defined applications.
         An application is an ML program registered through `REPL_Server.register_app`.
@@ -456,16 +463,15 @@ class Client:
         """
         if not isinstance(name, str):
             raise ValueError("the argument `name` must be a string")
-        mp.pack ("\x05app", self.cout)
-        mp.pack (name, self.cout)
-        self.cout.flush ()
-        found = Client._parse_control_ (self.unpack.unpack())
-        print (found)
+        mp.pack("\x05app", self.cout)
+        mp.pack(name, self.cout)
+        self.cout.flush()
+        found = Client._parse_control_(self.unpack.unpack())
         if not found:
             raise KeyError
         return None
 
-    def run_ML (self, thy, src):
+    def run_ML(self, thy, src):
         """
         Execute ML code in the global state of the Isabelle runtime.
         """
@@ -473,13 +479,13 @@ class Client:
             raise ValueError("the argument `thy` must be a string")
         if not isinstance(src, str):
             raise ValueError("the argument `src` must be a string")
-        mp.pack ("\x05ML", self.cout)
-        mp.pack ((thy,src), self.cout)
-        self.cout.flush ()
-        Client._parse_control_ (self.unpack.unpack())
+        mp.pack("\x05ML", self.cout)
+        mp.pack((thy, src), self.cout)
+        self.cout.flush()
+        Client._parse_control_(self.unpack.unpack())
         return None
 
-    def load_theory (self, targets, thy_qualifier=""):
+    def load_theory(self, targets, thy_qualifier=""):
         """
         Load theories. Short names can be used if the thy_qualifier is indicated.
         Otherwise, full names must be used.
@@ -489,27 +495,47 @@ class Client:
         """
         if not isinstance(thy_qualifier, str):
             raise ValueError("the argument `thy_qualifier` must be a string")
-        def is_list_of_strings(lst):
-            if lst and isinstance(lst, list):
-                return all(isinstance(elem, str) for elem in lst)
-            else:
-                return False
-        if not is_list_of_strings (targets):
+        if not is_list_of_strings(targets):
             raise ValueError("the argument `targets` must be a list of strings")
-        mp.pack ("\x05load", self.cout)
-        mp.pack ((thy_qualifier, targets), self.cout)
-        self.cout.flush ()
-        return Client._parse_control_ (self.unpack.unpack())
+        mp.pack("\x05load", self.cout)
+        mp.pack((thy_qualifier, targets), self.cout)
+        self.cout.flush()
+        return Client._parse_control_(self.unpack.unpack())
 
-    def eval_file (self, path):
+    def eval_file(self, path, line=~1, offst=0):
         """
         Evaluate the file at the given path.
         This method has the same return as the `eval` method.
+        Argument line and offset indicate the REPL to evaluate all code
+        until the first `offset` characters at the `line`, meaning the REPL
+        will stop at the position `line:offset`.
         """
         if not isinstance(path, str):
             raise ValueError("the argument `path` must be a string")
-        mp.pack ("\x05eval", self.cout)
-        mp.pack (path, self.cout)
-        self.cout.flush ()
-        return self.unpack.unpack()
+        if not isinstance(line, int):
+            raise ValueError("the argument `line` must be an int")
+        if not isinstance(offst, int):
+            raise ValueError("the argument `offst` must be an int")
+        pos = None
+        if line >= 0:
+            pos = (line, offst)
+        mp.pack("\x05eval", self.cout)
+        mp.pack((path, pos), self.cout)
+        self.cout.flush()
+        return Client._parse_control_(self.unpack.unpack())
+
+    def add_lib(self, libs):
+        """
+        Add additional `libs` that will be loaded whenever evaluating a theory.
+        :param libs:
+        All names must be fully qualified, e.g. "HOL-Library.Sublist" instead of "Sublist"
+        :return:
+        None
+        """
+        if not is_list_of_strings(libs):
+            raise ValueError("the argument `libs` must be a list of strings")
+        mp.pack("\x05addlibs", self.cout)
+        mp.pack(libs, self.cout)
+        self.cout.flush()
+        return Client._parse_control_(self.unpack.unpack())
 

@@ -7,7 +7,7 @@ begin
 
 ML \<open>Path.explode "/tmp/repl_outputs"\<close>
 
-ML \<open>REPL_Server.startup (Path.explode "/tmp/repl_outputs") NONE "127.0.0.1:4460"\<close>
+ML \<open>REPL_Server.startup (Path.explode "/tmp/repl_outputs") NONE "127.0.0.1:4472"\<close>
 
 term 1
 

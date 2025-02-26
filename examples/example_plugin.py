@@ -29,7 +29,7 @@ Read the docstring of `Client.plugin` for more details.
 """)
 
 # This plugin collects all variables in a proof state.
-c.plugin ("HOL.Main", "VARS", """
+c.plugin ("VARS", """
 let open MessagePackBinIO.Pack
     fun packType ctxt = packString o REPL.trim_makrup o Syntax.string_of_typ ctxt
     fun collect_vars s =

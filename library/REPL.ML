@@ -38,7 +38,10 @@ type Session_ID = int
    (*initialize the current thread as a repl worker*)
 val init_repler : Path.T (*base_dir used to store outputs*)
                -> theory option -> unit
-type cfg = { thy_qualifier : string, file : string option, position_label : string option }
+type cfg = { thy_qualifier : string,
+             file : string option,
+             position_label : string option,
+             additional_libs : string list }
 val RE : cfg -> string -> command_outputs
 val lex_commands : cfg -> string -> string list
 
@@ -103,7 +106,6 @@ val origin_warning : string list -> unit
 (* Library Control *)
 
     (*additional imports that will be injected into every evaluation target*)
-val additional_lib : string list Thread_Data.var
 val evaluated_theories : theory Symtab.table Thread_Data.var
 val add_evaluated_theories : string * theory -> unit
 val add_global_theories : string * theory -> unit
@@ -141,7 +143,10 @@ type collector = {current_command: Command_Span.span,
 type plugin_name = string
 type plugin  = plugin_name * collector
 type plugins = plugin list
-type cfg = { thy_qualifier : string, file : string option, position_label : string option }
+type cfg = { thy_qualifier : string,
+             file : string option,
+             position_label : string option,
+             additional_libs : string list }
 
 type command_output = {
         command_name : string,
@@ -315,9 +320,7 @@ fun add_evaluated_theories entry =
 fun add_global_theories entry =
   Synchronized.change global_theories (Symtab.update entry)
 
-val additional_lib = Thread_Data.var ()
-
-fun init_thy ignore_imports (base_dir, {thy_qualifier,...}) source =
+fun init_thy ignore_imports (base_dir, {thy_qualifier, additional_libs,...}) source =
   let val toks = Token.tokenize pure_keywords {strict = false} source
       val i = find_index is_theory_tok toks
    in if i = ~1
@@ -333,7 +336,7 @@ fun init_thy ignore_imports (base_dir, {thy_qualifier,...}) source =
 
       (* init theory *)
       val imports = #imports header
-                  @ map (rpair Position.none) (these (Thread_Data.get additional_lib))
+                  @ map (rpair Position.none) additional_libs
       val evaluated_theories = the_default Symtab.empty (Thread_Data.get evaluated_theories)
       val _ = if Symtab.defined evaluated_theories (#1 sname)
               then raise REPL_fail ("Theory " ^ #1 sname ^ " has been defined.")
@@ -355,7 +358,15 @@ fun get_thy cfg state source = (
       else error "BUG: K/aPbPakSCOMOSqoevPh+g"
     ; case try Toplevel.theory_of state
           of SOME thy => thy
-           | NONE => the_default Pure (init_thy false cfg source ))
+           | NONE =>
+      case init_thy false cfg source
+        of SOME thy => let
+            val path = Path.append (Resources.master_directory thy)
+                                   (Path.explode (Context.theory_name {long=false} thy ^ ".thy"))
+             in if File.exists path then File.rm path else ()
+              ; thy
+            end
+         | NONE => Pure)
 
 (* fun split_commands src *)
 
@@ -389,9 +400,15 @@ fun lex_split drop_first drop_if_no_meet kws ATTACH P source =
 
 val split_thy_headers = lex_split false false pure_keywords Token.is_command_modifier is_theory_tok
 
-fun parse_text cfg state source =
+fun parse_text cfg register_theory' state source =
   let val thy = get_thy cfg state source
-   in parse_text' thy (K thy) source
+   in if register_theory' andalso not (pointer_eq (Pure, thy))
+         andalso Resources.master_directory thy = fst cfg
+    then File.append (Path.append (Resources.master_directory thy)
+                                  (Path.explode (Context.theory_name {long=false} thy ^ ".thy")))
+                     (Symbol_Pos.content source)
+    else ()
+    ; parse_text' thy (K thy) source
    |> filter_out (Toplevel.is_ignored o fst)
   end
 
@@ -457,14 +474,19 @@ fun RE cfg source : command_outputs =
 
       fun mk_command_outputs a b = {outputs = if trace then SOME (rev a) else NONE, error=b} : command_outputs
 
-      fun loop ret [] [] s = (mk_command_outputs ret NONE, s)
-        | loop ret [] (src::srcs) s = loop ret (parse_text (base_dir,cfg) s src) srcs s
-        | loop ret ((tr,current_cmd)::trs) srcs s =
+      fun loop ret _ [] [] s = (mk_command_outputs ret NONE, s)
+        | loop ret errs [] (src::srcs) s =
+            loop ret errs (parse_text (base_dir, cfg) register_theory' s src) srcs s
+        | loop ret errs ((tr,current_cmd)::trs) srcs s =
             case Toplevel.command_errors false tr s
               of (err, NONE)    =>
-                    (mk_command_outputs (if trace then err_state err tr s::ret else [])
-                                        (SOME "Some error happens. Details may be given in the field `outputs.errors.` \
-                                              \See the document for Python client's `boring_parse` method."), s0)
+                  let val Er = case trim_err err @ errs
+                                 of [] => "Some error happens. Details may be given in the field `outputs.errors.` \
+                                          \See the document for Python client's `boring_parse` method. "
+                                  | Er => String.concatWith "\n\n" Er
+                   in (mk_command_outputs (if trace then err_state err tr s::ret else [])
+                                          (SOME Er), s0)
+                  end
                | (err, SOME s'0) =>
                 let val (plugin_output, s') = run_plugins plugins (current_cmd, trs, s'0)
                     val _ = if Toplevel.is_end_theory s'
@@ -482,10 +504,12 @@ fun RE cfg source : command_outputs =
                                end
                               else ()
                             else ()
-                 in loop (if trace then (catch_state plugin_output err tr s')::ret else []) trs srcs s'
+                 in loop (if trace then (catch_state plugin_output err tr s')::ret else [])
+                         (trim_err err @ errs)
+                         trs srcs s'
                 end
 
-      val (ret, s') = loop [] [] srcs s0
+      val (ret, s') = loop [] [] [] srcs s0
 
    in Thread_Data.put state (SOME (s', cnt+1, (trace, register_theory'), H))
     ; ret
