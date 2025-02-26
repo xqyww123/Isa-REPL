@@ -6,12 +6,11 @@ type message = message_type * string
 type collector = {current_command: Command_Span.span,
                   state: Toplevel.state, (*the state after executing the current command*)
                   remaining: (Toplevel.transition * Command_Span.span) list
-                                         (*the remaining code within the same theory*)}
+                                         (*the remaining code within the same theory file*)}
               -> MessagePackBinIO.Pack.raw_packer option *
                  Toplevel.state option
 type plugin_name = string
 type plugin  = plugin_name * collector
-type plugins = plugin list
 
 type flags = {
         is_toplevel: bool,
@@ -36,11 +35,19 @@ type command_outputs = {
 exception REPL_fail of string
 
 type Session_ID = int
-val init_repler : Session_ID -> theory option -> unit
-type cfg = {base_dir: Path.T, thy_qualifier: string}
+   (*initialize the current thread as a repl worker*)
+val init_repler : Path.T (*base_dir used to store outputs*)
+               -> theory option -> unit
+type cfg = { thy_qualifier : string,
+             file : string option,
+             position_label : string option,
+             additional_libs : string list }
 val RE : cfg -> string -> command_outputs
 val lex_commands : cfg -> string -> string list
+
 val set_trace : bool -> unit
+val set_register_thy : bool -> unit
+val thy_loader : string -> string list -> theory list
 
 (* Plugin *)
 
@@ -84,10 +91,24 @@ type context = {
   goals      : cterm list
 }
 
+val get_toplevel_state : unit -> Toplevel.state
 val get_context : unit -> context
 val get_ctxt : unit -> Proof.context
 
+(*Auxiliary*)
+
 val disable_output : unit -> unit
+
+val origin_writeln : string list -> unit
+val origin_tracing : string list -> unit
+val origin_warning : string list -> unit
+
+(* Library Control *)
+
+    (*additional imports that will be injected into every evaluation target*)
+val evaluated_theories : theory Symtab.table Thread_Data.var
+val add_evaluated_theories : string * theory -> unit
+val add_global_theories : string * theory -> unit
 
 end
 
@@ -122,7 +143,10 @@ type collector = {current_command: Command_Span.span,
 type plugin_name = string
 type plugin  = plugin_name * collector
 type plugins = plugin list
-type cfg = {base_dir: Path.T, thy_qualifier: string}
+type cfg = { thy_qualifier : string,
+             file : string option,
+             position_label : string option,
+             additional_libs : string list }
 
 type command_output = {
         command_name : string,
@@ -161,7 +185,7 @@ val remove_plugin : (string -> plugins -> plugins) = AList.delete (op =)
 (** Worker ID **)
 
 type Session_ID = int
-val Session_ID = Thread_Data.var () : (Session_ID * plugins) Thread_Data.var;
+val Session_ID = Thread_Data.var () : (Session_ID * Path.T * plugins) Thread_Data.var;
 
 fun the_current_worker_ID () = Option.map #1 (Thread_Data.get Session_ID)
 
@@ -178,13 +202,13 @@ fun get_and_clean_message' wid =
 
 fun get_and_clean_message () =
   case Thread_Data.get Session_ID
-    of SOME (id, _) => get_and_clean_message' id
+    of SOME (id, _, _) => get_and_clean_message' id
      | NONE => []
 
 fun init_printers () =
   let fun output_fn typ fallback = (fn ms =>
             case Thread_Data.get Session_ID
-              of SOME (id, _) =>
+              of SOME (id, _, _) =>
                     Synchronized.change message_buffer
                         (Inttab.map_entry id (fn L => (typ, trim_makrup (implode ms)) :: L))
                | NONE => fallback ms )
@@ -193,6 +217,8 @@ fun init_printers () =
     ; Private_Output.warning_fn := output_fn WARNING (!Private_Output.warning_fn)
   end
 
+val (origin_writeln, origin_tracing, origin_warning) =
+    (!Private_Output.writeln_fn, !Private_Output.tracing_fn, !Private_Output.warning_fn)
 val _ = init_printers ()
 
 fun disable_output () = (
@@ -218,13 +244,14 @@ type state_history = (string * Toplevel.state) list
 
 type counter = int
 type trace = bool
-val state = Thread_Data.var () : (Toplevel.state * counter * trace * state_history) Thread_Data.var
+type register_theory = bool
+val state = Thread_Data.var () : (Toplevel.state * counter * (trace * register_theory) * state_history) Thread_Data.var
 
 val Pure = Theory.get_pure ()
 val pure_keywords = Thy_Header.get_keywords Pure
 
-val evaluated_theories = Thread_Data.var () : theory Symtab.table Thread_Data.var
-val global_loaded_theories = Synchronized.var "REPL loaded theories" Symtab.empty
+val evaluated_theories = Thread_Data.var ()
+val global_theories = Synchronized.var "global_theories" Symtab.empty
 
 exception REPL_fail of string
 
@@ -240,7 +267,8 @@ fun thy_loader thy_qualifier targets =
       val can_load = Execution.is_running Document_ID.none
       fun is_loaded import =
           Symtab.defined evaluated_theories import orelse
-          is_some (Thy_Info.lookup_theory import)
+          is_some (Thy_Info.lookup_theory import) orelse
+          Symtab.defined (Synchronized.value global_theories) import
 
       val _ = Synchronized.change load_targets (fn ex =>
         let val not_loaded = filter_out is_loaded targets
@@ -275,12 +303,24 @@ fun thy_loader thy_qualifier targets =
         case Thy_Info.lookup_theory import
           of SOME thy => thy
            | NONE     =>
+        case Symtab.lookup (Synchronized.value global_theories) import
+          of SOME thy => thy
+           | NONE =>
          raise REPL_fail ("Bad theory import " ^ import)
         )
    in map load' targets
   end
 
-fun init_thy ignore_imports {base_dir, thy_qualifier} wid source =
+fun add_evaluated_theories entry =
+  let val store  = the_default Symtab.empty (Thread_Data.get evaluated_theories)
+      val store' = Symtab.update entry store
+   in Thread_Data.put evaluated_theories (SOME store')
+  end
+
+fun add_global_theories entry =
+  Synchronized.change global_theories (Symtab.update entry)
+
+fun init_thy ignore_imports (base_dir, {thy_qualifier, additional_libs,...}) source =
   let val toks = Token.tokenize pure_keywords {strict = false} source
       val i = find_index is_theory_tok toks
    in if i = ~1
@@ -296,6 +336,7 @@ fun init_thy ignore_imports {base_dir, thy_qualifier} wid source =
 
       (* init theory *)
       val imports = #imports header
+                  @ map (rpair Position.none) additional_libs
       val evaluated_theories = the_default Symtab.empty (Thread_Data.get evaluated_theories)
       val _ = if Symtab.defined evaluated_theories (#1 sname)
               then raise REPL_fail ("Theory " ^ #1 sname ^ " has been defined.")
@@ -312,21 +353,20 @@ fun init_thy ignore_imports {base_dir, thy_qualifier} wid source =
   end
   end
 
-fun get_thy cfg wid state source = (
+fun get_thy cfg state source = (
       if can Toplevel.theory_of state <> Toplevel.is_toplevel state then ()
       else error "BUG: K/aPbPakSCOMOSqoevPh+g"
     ; case try Toplevel.theory_of state
           of SOME thy => thy
-           | NONE => if null source
-                     then Pure
-                     else the_default Pure (init_thy false cfg wid source ) )
-
-fun get_thy' wid state = (
-      if can Toplevel.theory_of state <> Toplevel.is_toplevel state then ()
-      else error "BUG: K/aPbPakSCOMOSqoevPh+g"
-    ; case try Toplevel.theory_of state
-          of SOME thy => thy
-           | NONE => Pure )
+           | NONE =>
+      case init_thy false cfg source
+        of SOME thy => let
+            val path = Path.append (Resources.master_directory thy)
+                                   (Path.explode (Context.theory_name {long=false} thy ^ ".thy"))
+             in if File.exists path then File.rm path else ()
+              ; thy
+            end
+         | NONE => Pure)
 
 (* fun split_commands src *)
 
@@ -360,16 +400,27 @@ fun lex_split drop_first drop_if_no_meet kws ATTACH P source =
 
 val split_thy_headers = lex_split false false pure_keywords Token.is_command_modifier is_theory_tok
 
-fun parse_text cfg wid state source =
-  let val thy = get_thy cfg wid state source
-   in parse_text' thy (K thy) source
+fun parse_text cfg register_theory' state source =
+  let val thy = get_thy cfg state source
+   in if register_theory' andalso not (pointer_eq (Pure, thy))
+         andalso Resources.master_directory thy = fst cfg
+    then File.append (Path.append (Resources.master_directory thy)
+                                  (Path.explode (Context.theory_name {long=false} thy ^ ".thy")))
+                     (Symbol_Pos.content source)
+    else ()
+    ; parse_text' thy (K thy) source
    |> filter_out (Toplevel.is_ignored o fst)
   end
 
 fun set_trace v =
   case Thread_Data.get state
     of NONE => raise REPL_fail "INTERNAL ERROR: state lost"
-     | SOME (s,c,_,H) => Thread_Data.put state (SOME (s, c, v, H))
+     | SOME (s,c,(_,rt),H) => Thread_Data.put state (SOME (s, c, (v, rt), H))
+
+fun set_register_thy v =
+  case Thread_Data.get state
+    of NONE => raise REPL_fail "INTERNAL ERROR: state lost"
+     | SOME (s,c,(tr,_),H) => Thread_Data.put state (SOME (s, c, (tr, v), H))
 
 val trim_err = map (trim_makrup o #2 o #1)
 fun catch_state' wid plugin_output err command s : command_output = {
@@ -390,12 +441,16 @@ fun catch_state' wid plugin_output err command s : command_output = {
 fun RE cfg source : command_outputs =
   case Thread_Data.get state
     of NONE                  => {outputs=NONE, error=SOME "INTERNAL ERROR: state lost"}
-     | SOME (s0,cnt,trace,H) =>
+     | SOME (s0,cnt,(trace, register_theory'),H) =>
   case Thread_Data.get Session_ID
     of NONE                => {outputs=NONE, error=SOME "INTERNAL ERROR: worker ID lost"}
-     | SOME (wid, plugins) =>
+     | SOME (wid, base_dir, plugins) =>
   let val pos = Position.make {
-                  line=1, offset=1, end_offset=1, props={label="", file="#REPL", id=string_of_int cnt}}
+                  line=1, offset=1, end_offset=1,
+                  props= { label = the_default "" (#position_label cfg),
+                           file = the_default "#REPL" (#file cfg),
+                           id=string_of_int cnt }
+                }
       val srcs = Symbol_Pos.explode (source, pos)
               |> split_thy_headers
 
@@ -418,45 +473,61 @@ fun RE cfg source : command_outputs =
           }
 
       fun mk_command_outputs a b = {outputs = if trace then SOME (rev a) else NONE, error=b} : command_outputs
-            
-      fun loop ret [] [] s = (mk_command_outputs ret NONE, s)
-        | loop ret [] (src::srcs) s = loop ret (parse_text cfg wid s src) srcs s
-        | loop ret ((tr,current_cmd)::trs) srcs s =
-            case Toplevel.command_errors true tr s
+
+      fun loop ret _ [] [] s = (mk_command_outputs ret NONE, s)
+        | loop ret errs [] (src::srcs) s =
+            loop ret errs (parse_text (base_dir, cfg) register_theory' s src) srcs s
+        | loop ret errs ((tr,current_cmd)::trs) srcs s =
+            case Toplevel.command_errors false tr s
               of (err, NONE)    =>
-                    (mk_command_outputs (if trace then err_state err tr s::ret else [])
-                                        (SOME "Some error happens. Details may be given in the field `outputs.errors.` \
-                                              \See the document for Python client's `boring_parse` method."), s0)
+                  let val Er = case trim_err err @ errs
+                                 of [] => "Some error happens. Details may be given in the field `outputs.errors.` \
+                                          \See the document for Python client's `boring_parse` method. "
+                                  | Er => String.concatWith "\n\n" Er
+                   in (mk_command_outputs (if trace then err_state err tr s::ret else [])
+                                          (SOME Er), s0)
+                  end
                | (err, SOME s'0) =>
                 let val (plugin_output, s') = run_plugins plugins (current_cmd, trs, s'0)
                     val _ = if Toplevel.is_end_theory s'
-                            then let
-                              val thys = the_default Symtab.empty (Thread_Data.get evaluated_theories)
-                              val thy  = Toplevel.end_theory pos s'
-                              val thys'= Symtab.update_new (Context.theory_name {long=true} thy, thy) thys
-                              in Thread_Data.put evaluated_theories (SOME thys')
-                               ; (Thy_Info.register_thy thy
-                                  handle err as Exn.ERROR msg => (
-                                    if String.isPrefix "Cannot update finished theory" msg
-                                    then ()
-                                    else Exn.reraise err ))
-                             end
+                            then if register_theory'
+                              then let
+                                val thys = the_default Symtab.empty (Thread_Data.get evaluated_theories)
+                                val thy  = Toplevel.end_theory pos s'
+                                val thys'= Symtab.update_new (Context.theory_name {long=true} thy, thy) thys
+                                in Thread_Data.put evaluated_theories (SOME thys')
+                                 ; (Thy_Info.register_thy thy
+                                    handle err as Exn.ERROR msg => (
+                                      if String.isPrefix "Cannot update finished theory" msg
+                                      then ()
+                                      else Exn.reraise err ))
+                               end
+                              else ()
                             else ()
-                 in loop (if trace then (catch_state plugin_output err tr s')::ret else []) trs srcs s'
+                 in loop (if trace then (catch_state plugin_output err tr s')::ret else [])
+                         (trim_err err @ errs)
+                         trs srcs s'
                 end
 
-      val (ret, s') = loop [] [] srcs s0
+      val (ret, s') = loop [] [] [] srcs s0
 
-   in Thread_Data.put state (SOME (s', cnt+1, trace, H))
+   in Thread_Data.put state (SOME (s', cnt+1, (trace, register_theory'), H))
     ; ret
   end
   handle REPL_fail E => {outputs = NONE, error=SOME E}
 
-fun init_repler id thy =
-  let 
-   in Thread_Data.put Session_ID (SOME (id, []))
+val ID_counter = Counter.make ()
+
+fun init_repler base_base thy =
+  let val id = ID_counter ()
+      val base_dir = Path.append base_base (Path.basic (string_of_int id))
+      val _ = if File.is_dir base_dir
+              then ()
+              else ( if File.exists base_dir then File.rm base_dir else ();
+                     OS.FileSys.mkDir (File.platform_path base_dir) )
+   in Thread_Data.put Session_ID (SOME (id, base_dir, []))
     ; Synchronized.change message_buffer (Inttab.update_new (id, []))
-    ; Thread_Data.put state (SOME (Toplevel.make_state thy, 0, true, []))
+    ; Thread_Data.put state (SOME (Toplevel.make_state thy, 0, (true, true), []))
   end
 
 
@@ -474,7 +545,7 @@ fun split_commands cfg wid state source =
 fun lex_commands cfg source =
   case Thread_Data.get Session_ID
     of NONE         => raise REPL_fail "INTERNAL ERROR: worker ID lost"
-     | SOME (wid,_) =>
+     | SOME (_,base_dir,_) =>
   case Thread_Data.get state
     of NONE              => raise REPL_fail  "INTERNAL ERROR: state lost"
      | SOME (s0,cnt,_,_) =>
@@ -482,7 +553,7 @@ fun lex_commands cfg source =
                   line=1, offset=1, end_offset=1, props={label="", file="#REPL", id=string_of_int cnt}}
       fun parse [] = []
         | parse (src::srcs) =
-        let val thy = case init_thy true cfg wid src
+        let val thy = case init_thy true (base_dir, cfg) src
                         of SOME thy => thy
                          | NONE => the_default Pure (try Toplevel.theory_of s0)
             val kws = Thy_Header.get_keywords thy
@@ -504,14 +575,14 @@ fun lex_commands cfg source =
 fun register_plugin plugin =
   case Thread_Data.get Session_ID
     of NONE               => raise REPL_fail "INTERNAL ERROR: worker ID lost"
-     | SOME (wid,plugins) =>
-        Thread_Data.put Session_ID (SOME (wid, add_plugin plugin plugins))
+     | SOME (wid,base_dir,plugins) =>
+        Thread_Data.put Session_ID (SOME (wid, base_dir, add_plugin plugin plugins))
 
 fun delete_plugin name =
   case Thread_Data.get Session_ID
     of NONE               => raise REPL_fail "INTERNAL ERROR: worker ID lost"
-     | SOME (wid,plugins) =>
-        Thread_Data.put Session_ID (SOME (wid, remove_plugin name plugins))
+     | SOME (wid,base_dir,plugins) =>
+        Thread_Data.put Session_ID (SOME (wid, base_dir, remove_plugin name plugins))
 
 (** State Rollback II **)
 
@@ -537,7 +608,7 @@ fun clean_state () =
 fun rollback_state name =
   case Thread_Data.get Session_ID
     of NONE                => raise REPL_fail  "INTERNAL ERROR: state lost"
-     | SOME (wid, plugins) =>
+     | SOME (wid, _, plugins) =>
   case Thread_Data.get state
     of NONE             => raise REPL_fail  "INTERNAL ERROR: state lost"
      | SOME (s,cnt,t,H) =>
@@ -561,7 +632,7 @@ fun list_states () =
 fun list_states' () =
   case Thread_Data.get Session_ID
     of NONE                => raise REPL_fail  "INTERNAL ERROR: state lost"
-     | SOME (wid, plugins) =>
+     | SOME (wid, _,plugins) =>
   case Thread_Data.get state
     of NONE           => raise REPL_fail  "INTERNAL ERROR: state lost"
      | SOME (_,_,_,H) => map (apsnd (fn s' =>
@@ -631,11 +702,14 @@ type context = {
   goals      : cterm list
 }
 
-fun get_context () =
+fun get_toplevel_state () =
   case Thread_Data.get state
     of NONE           => raise REPL_fail  "INTERNAL ERROR: state lost"
-     | SOME (s,_,_,_) => (
-  case (try Toplevel.context_of s, try Toplevel.proof_of s)
+     | SOME (s,_,_,_) => s
+
+fun get_context () =
+  let val s = get_toplevel_state ()
+   in case (try Toplevel.context_of s, try Toplevel.proof_of s)
     of (SOME ctxt, prfstate) =>
       let
         val facts = Proof_Context.facts_of ctxt
@@ -658,7 +732,8 @@ fun get_context () =
            goals = (case prfstate of NONE => []
                        | SOME s => Thm.cprems_of (#goal (Proof.goal s)) )}
       end
-     | (NONE, _) => raise REPL_fail "Not in a proof context." )
+     | (NONE, _) => raise REPL_fail "Not in a proof context."
+  end
 
 fun get_ctxt () =
   case Thread_Data.get state

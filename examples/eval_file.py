@@ -22,26 +22,20 @@ addr   = sys.argv[1]
 target = sys.argv[2]
 
 c = Client(addr, 'HOL')
+c.set_register_thy (False) # preventing the REPL to reigster he evaluated theories
+                # to the Isabelle system. This suppresses the `duplicate exports`
+                # errors.
 
-session = c.session_name_of (target)
-if session:
-    print ("The session is: " + session)
-    c.set_thy_qualifier(session)
-else:
-    print ("Fail to infer the session of the target file. The evaluation can fail.")
-
-c.set_trace (False) # I disable the tracing for speeding up the evaluation
-                    # Consequently, all c.eval(..)[0] will be None
+# c.set_trace (False) # You could uncomment this line to disable the tracing
+                      # and to speed up the evaluation.
+#                     # Consequently, the later `ret` will be None
 
 def is_empty(obj):
     return obj == [] or obj == ""
 
-with open(target, "r") as file:
-    content = file.read()
-    ret = c.eval(content)
-    if not is_empty(ret[1]) and not ret[1] is None:
-        print(ret[1])
-        exit(1)
+ret = c.eval_file (target)
+print ('result:')
+print(ret)
 
 print("success")
 exit(0)
