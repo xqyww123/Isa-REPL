@@ -15,7 +15,7 @@ class Client:
     A client for connecting Isabelle REPL
     """
 
-    VERSION = '0.9.0'
+    VERSION = '0.9.1'
 
     def __init__(self, addr, thy_qualifier):
         """
@@ -539,3 +539,10 @@ class Client:
         self.cout.flush()
         return Client._parse_control_(self.unpack.unpack())
 
+    def num_processor (self):
+        """
+        :return: the number of processors available
+        """
+        mp.pack("\x05numcpu", self.cout)
+        self.cout.flush()
+        return Client._parse_control_(self.unpack.unpack())
