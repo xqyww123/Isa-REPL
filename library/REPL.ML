@@ -257,7 +257,6 @@ exception REPL_fail of string
 
 fun is_theory_tok tok = Token.is_kind Token.Command tok andalso Token.content_of tok = "theory"
 
-val load_targets  = Synchronized.var "REPL import targets" ([] : string list)
 val loader_locker = Synchronized.var "REPL theory loader locker" ()
 
 fun thy_loader thy_qualifier targets =
@@ -270,17 +269,12 @@ fun thy_loader thy_qualifier targets =
           is_some (Thy_Info.lookup_theory import) orelse
           Symtab.defined (Synchronized.value global_theories) import
 
-      val _ = Synchronized.change load_targets (fn ex =>
-        let val not_loaded = filter_out is_loaded targets
-         in if not can_load andalso not (null not_loaded)
-            then raise REPL_fail ("Fail to load " ^ space_implode ", " not_loaded)
-            else not_loaded @ ex
-        end
-        )
 
       val _ = Synchronized.change loader_locker (fn () =>
-        let val targets = Synchronized.change_result load_targets (fn targets => (targets, []))
-                       |> filter_out (is_some o Thy_Info.lookup_theory)
+        let val targets = filter_out is_loaded targets
+            val _ = if not can_load andalso not (null targets)
+                    then raise REPL_fail ("Fail to load " ^ space_implode ", " targets)
+                    else ()
             fun seg_load L =
               if null L
               then ()
