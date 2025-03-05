@@ -63,6 +63,11 @@ class Client:
         mp.pack(thy_qualifier, self.cout)
         self.cout.flush()
 
+    def __enter__(self):
+        return self
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.close()
+
     def close(self):
         if self.cout:
             self.cout.close()
@@ -545,4 +550,7 @@ class Client:
         """
         mp.pack("\x05numcpu", self.cout)
         self.cout.flush()
-        return Client._parse_control_(self.unpack.unpack())
+        ret = Client._parse_control_(self.unpack.unpack())
+        if ret <= 0:
+            ret = 1
+        return ret
