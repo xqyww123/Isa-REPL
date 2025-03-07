@@ -193,13 +193,15 @@ fun startup base_dir_of_theories thy0 addr0 =
 
           val (version, cin) = MessagePackBinIO.Unpack.doUnpack
                                           (MessagePackBinIO.Unpack.unpackString) cin
-          val _ = if version = "0.9.1" then ()
+          val _ = if version = "0.9.2" then ()
                   else (
                     output_err cout "The server is connected with a wrong version of the client.\n\
-                             \Please run `pip install \"IsaREPL==0.9.1\" --force-reinstall` to update your client."
+                             \Please run `pip install \"IsaREPL==0.9.2\" --force-reinstall` to update your client."
                   ; BinIO.StreamIO.flushOut cout
                   ; Socket.close conn
                   ; raise BAD_CONN)
+          val _ = output cout MessagePackBinIO.Pack.packInt (ML_Pid.get ())
+          val _ = BinIO.StreamIO.flushOut cout
 
           val (thy_qualifier, cin) = MessagePackBinIO.Unpack.doUnpack
                                           (MessagePackBinIO.Unpack.unpackString) cin
