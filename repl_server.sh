@@ -103,6 +103,7 @@ session REPL$$ = "$(printf '%b' $BASE_SESSION)"
    theories REPL$$
 EOF
 
+echo 1000 > /proc/$$/oom_score_adj
 echo isabelle build -D $DIR $options REPL$$
 REPL_DEFAULT_SESSION="$(printf '%b' $BASE_SESSION)" isabelle build -D $DIR $options REPL$$
 
