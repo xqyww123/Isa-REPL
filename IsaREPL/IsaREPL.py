@@ -1,5 +1,7 @@
 import msgpack as mp
 import socket
+import os
+import signal
 
 REPLFail = type('REPLFail', (Exception,), {})
 
@@ -15,7 +17,7 @@ class Client:
     A client for connecting Isabelle REPL
     """
 
-    VERSION = '0.9.1'
+    VERSION = '0.9.2'
 
     def __init__(self, addr, thy_qualifier):
         """
@@ -62,6 +64,7 @@ class Client:
         mp.pack(Client.VERSION, self.cout)
         mp.pack(thy_qualifier, self.cout)
         self.cout.flush()
+        self.pid = Client._parse_control_(self.unpack.unpack())
 
     def __enter__(self):
         return self
@@ -554,3 +557,9 @@ class Client:
         if ret <= 0:
             ret = 1
         return ret
+
+    def kill(self):
+        """
+        Kill the entire server
+        """
+        os.kill(self.pid, signal.SIGKILL)
