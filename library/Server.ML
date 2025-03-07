@@ -179,21 +179,27 @@ fun startup base_dir_of_theories thy0 addr0 =
       val _ = Socket.listen (socket, 16)
       val msg = "Hi, this is Isabelle REPL Server.\n\
         \I'm now listening on " ^ addr0 ^ ". I will never terminate untill you kill me!"
+
+      exception BAD_CONN
    in writeln msg
     ; Output.physical_stdout msg
     ; Output.physical_stderr msg
     ; Isabelle_Thread.fork (  Isabelle_Thread.params ("REPL server " ^ addr0)
                            |> Isabelle_Thread.interrupts )  (fn () => (
       Synchronized.change servers (Symtab.update_new (addr0, Isabelle_Thread.self ()))
-    ; \<^try>\<open> while true do 
+    ; \<^try>\<open> while true do (
       let val (conn,sender) = Socket.accept socket
           val (cin, cout) = make_streams conn
 
           val (version, cin) = MessagePackBinIO.Unpack.doUnpack
                                           (MessagePackBinIO.Unpack.unpackString) cin
-          val _ = if version = "0.9.0" then ()
-                  else error "The server is connected with a wrong version of the client.\n\
-                             \Please run `pip install \"IsaREPL==0.9.0\" --force-reinstall` to update your client."
+          val _ = if version = "0.9.1" then ()
+                  else (
+                    output_err cout "The server is connected with a wrong version of the client.\n\
+                             \Please run `pip install \"IsaREPL==0.9.1\" --force-reinstall` to update your client."
+                  ; BinIO.StreamIO.flushOut cout
+                  ; Socket.close conn
+                  ; raise BAD_CONN)
 
           val (thy_qualifier, cin) = MessagePackBinIO.Unpack.doUnpack
                                           (MessagePackBinIO.Unpack.unpackString) cin
@@ -387,6 +393,11 @@ fun startup base_dir_of_theories thy0 addr0 =
                              ; output cout packUnit ()
                              ; cin''
                            end
+                     | "\005numcpu" => let
+                               val num = Multithreading.max_threads ()
+                            in output cout packInt num
+                             ; cin'
+                           end
                     end handle REPL.REPL_fail E => (
                            output_err cout E
                          ; cin')
@@ -407,7 +418,9 @@ fun startup base_dir_of_theories thy0 addr0 =
                                (fn () => ( REPL.init_repler base_dir_of_theories thy0
                                          ; Thread_Data.put sockets (SOME (cin, cout))
                                          ; loop cin ))
+         ; ()
       end
+      handle BAD_CONN => () )
       finally
         Synchronized.change servers (Symtab.delete addr0) \<close> ))
   end

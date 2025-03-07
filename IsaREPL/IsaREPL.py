@@ -15,7 +15,7 @@ class Client:
     A client for connecting Isabelle REPL
     """
 
-    VERSION = '0.9.0'
+    VERSION = '0.9.1'
 
     def __init__(self, addr, thy_qualifier):
         """
@@ -62,6 +62,11 @@ class Client:
         mp.pack(Client.VERSION, self.cout)
         mp.pack(thy_qualifier, self.cout)
         self.cout.flush()
+
+    def __enter__(self):
+        return self
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.close()
 
     def close(self):
         if self.cout:
@@ -580,3 +585,13 @@ class Client:
         self.cout.flush()
         return Client._parse_control_(self.unpack.unpack())
 
+    def num_processor (self):
+        """
+        :return: the number of processors available
+        """
+        mp.pack("\x05numcpu", self.cout)
+        self.cout.flush()
+        ret = Client._parse_control_(self.unpack.unpack())
+        if ret <= 0:
+            ret = 1
+        return ret
