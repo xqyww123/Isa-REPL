@@ -200,7 +200,7 @@ fun startup base_dir_of_theories thy0 addr0 =
                   ; BinIO.StreamIO.flushOut cout
                   ; Socket.close conn
                   ; raise BAD_CONN)
-          val _ = output cout MessagePackBinIO.Pack.packInt (ML_Pid.get ())
+          val _ = output cout MessagePackBinIO.Pack.packInt (Value.parse_int (getenv_strict "REPL_PID"))
           val _ = BinIO.StreamIO.flushOut cout
 
           val (thy_qualifier, cin) = MessagePackBinIO.Unpack.doUnpack
@@ -243,7 +243,7 @@ fun startup base_dir_of_theories thy0 addr0 =
                      | "\005lex" => let
                                val (src, cin'') = doUnpack unpackString cin'
                                val rets = REPL.lex_commands (!cfg) src
-                               val _ = output cout (packList packString) rets
+                               val _ = output cout (packList (packString o snd)) rets
                             in cin''
                            end
                      | "\005plugin" => let
@@ -275,12 +275,12 @@ fun startup base_dir_of_theories thy0 addr0 =
                            end
                      | "\005rollback" => let
                                val (name, cin'') = doUnpack unpackString cin'
-                               val ret = REPL.rollback_state name
+                               val ret = REPL.rollback_state (!cfg) name
                                val _ = output cout REPL_Serialize.command_output_packer ret
                             in cin''
                            end
                      | "\005history" => let
-                               val his = REPL.list_states' ()
+                               val his = REPL.list_states' (!cfg) ()
                                val _ = output cout (packPairList (packString, REPL_Serialize.command_output_packer)) his
                             in cin'
                            end

@@ -3,7 +3,12 @@ signature REPL = sig
 datatype message_type = NORMAL | TRACING | WARNING
 type message = message_type * string
 
-type collector = {current_command: Command_Span.span,
+type cfg = { thy_qualifier : string,
+             file : string option,
+             position_label : string option,
+             additional_libs : string list }
+type collector = cfg
+              -> {current_command: Command_Span.span,
                   state: Toplevel.state, (*the state after executing the current command*)
                   remaining: (Toplevel.transition * Command_Span.span) list
                                          (*the remaining code within the same theory file*)}
@@ -38,12 +43,8 @@ type Session_ID = int
    (*initialize the current thread as a repl worker*)
 val init_repler : Path.T (*base_dir used to store outputs*)
                -> theory option -> unit
-type cfg = { thy_qualifier : string,
-             file : string option,
-             position_label : string option,
-             additional_libs : string list }
 val RE : cfg -> string -> command_outputs
-val lex_commands : cfg -> string -> string list
+val lex_commands : cfg -> string -> (Position.T * string) list
 
 val set_trace : bool -> unit
 val set_register_thy : bool -> unit
@@ -67,9 +68,9 @@ type state_history = (string * Toplevel.state) list
 val record_state : string -> unit
 val remove_state : string -> unit
 val clean_state : unit -> unit
-val rollback_state : string -> command_output
+val rollback_state : cfg -> string -> command_output
 val list_states  : unit -> state_history
-val list_states' : unit -> (string (*name*) * command_output) list
+val list_states' : cfg -> unit -> (string (*name*) * command_output) list
 
 (* Parse *)
 
@@ -134,7 +135,13 @@ type flags = {
         is_proof   : bool
 }
 
-type collector = {current_command: Command_Span.span,
+type cfg = { thy_qualifier : string,
+             file : string option,
+             position_label : string option,
+             additional_libs : string list }
+
+type collector = cfg
+              -> {current_command: Command_Span.span,
                   state: Toplevel.state, (*the state after executing the current command*)
                   remaining: (Toplevel.transition * Command_Span.span) list
                                          (*the remaining code within the same theory*)}
@@ -143,10 +150,6 @@ type collector = {current_command: Command_Span.span,
 type plugin_name = string
 type plugin  = plugin_name * collector
 type plugins = plugin list
-type cfg = { thy_qualifier : string,
-             file : string option,
-             position_label : string option,
-             additional_libs : string list }
 
 type command_output = {
         command_name : string,
@@ -166,12 +169,12 @@ type command_outputs = {
 
 (** Plugin **)
 
-fun run_plugins (plugins : plugins) (current,remaining,s) =
+fun run_plugins cfg (plugins : plugins) (current,remaining,s) =
   let fun loop ret [] s = (ret, s)
         | loop ret ((name,collector)::plugins) s =
-        case collector {current_command = current,
-                        state = s,
-                        remaining = remaining}
+        case collector cfg {current_command = current,
+                            state = s,
+                            remaining = remaining}
           of (SOME out, SOME s') => loop ((name,out)::ret) plugins s'
            | (SOME out, NONE   ) => loop ((name,out)::ret) plugins s
            | (NONE    , SOME s') => loop ret plugins s'
@@ -482,7 +485,7 @@ fun RE cfg source : command_outputs =
                                           (SOME Er), s0)
                   end
                | (err, SOME s'0) =>
-                let val (plugin_output, s') = run_plugins plugins (current_cmd, trs, s'0)
+                let val (plugin_output, s') = run_plugins cfg plugins (current_cmd, trs, s'0)
                     val _ = if Toplevel.is_end_theory s'
                             then if register_theory'
                               then let
@@ -555,7 +558,9 @@ fun lex_commands cfg source =
 
             val thys = the_default Symtab.empty (Thread_Data.get evaluated_theories)
             val thys'= Symtab.update_new (Context.theory_name {long=true} thy, thy) thys
-         in map (Symbol_Pos.implode) ret
+            fun pos_of [] = Position.none
+              | pos_of (h :: _) = snd h
+         in map (fn syms => (pos_of syms, Symbol_Pos.implode syms)) ret
          :: Thread_Data.setmp evaluated_theories (SOME thys') parse srcs
         end
    in Symbol_Pos.explode (source, pos)
@@ -599,7 +604,7 @@ fun clean_state () =
      Thread_Data.put state (SOME (s, cnt, t, []))
 
 
-fun rollback_state name =
+fun rollback_state cfg name =
   case Thread_Data.get Session_ID
     of NONE                => raise REPL_fail  "INTERNAL ERROR: state lost"
      | SOME (wid, _, plugins) =>
@@ -610,10 +615,10 @@ fun rollback_state name =
        of NONE => raise REPL_fail ("Historical state " ^ name ^ " is not found.")
         | SOME s' => let
        val (plugin_output, s'') =
-            run_plugins plugins (Command_Span.Span
-                                    (Command_Span.Command_Span ("<rollback>", Position.none), []),
-                                 [],
-                                 s')
+            run_plugins cfg plugins (Command_Span.Span
+                                        (Command_Span.Command_Span ("<rollback>", Position.none), []),
+                                     [],
+                                     s')
     in Thread_Data.put state (SOME (s'', cnt, t, H))
      ; catch_state' wid plugin_output [] "" s'
    end 
@@ -623,7 +628,7 @@ fun list_states () =
     of NONE           => raise REPL_fail  "INTERNAL ERROR: state lost"
      | SOME (_,_,_,H) => H
 
-fun list_states' () =
+fun list_states' cfg () =
   case Thread_Data.get Session_ID
     of NONE                => raise REPL_fail  "INTERNAL ERROR: state lost"
      | SOME (wid, _,plugins) =>
@@ -631,10 +636,10 @@ fun list_states' () =
     of NONE           => raise REPL_fail  "INTERNAL ERROR: state lost"
      | SOME (_,_,_,H) => map (apsnd (fn s' =>
           catch_state' wid (#1 (
-            run_plugins plugins (Command_Span.Span
-                                    (Command_Span.Command_Span ("<list>", Position.none), []),
-                                 [],
-                                 s')
+            run_plugins cfg plugins (Command_Span.Span
+                                        (Command_Span.Command_Span ("<list>", Position.none), []),
+                                     [],
+                                     s')
           )) [] "" s'
        )) H
 

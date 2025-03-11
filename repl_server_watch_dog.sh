@@ -15,7 +15,9 @@ while true; do
     fi
 
     echo "The server terminates with code $exit_status. Now rebooting the server..."
-    sleep 1
+    pkill -f 'repl_server\.sh'
+    pkill -f 'Isabelle2024/heaps/polyml'
+    sleep 2
 done
 
 
