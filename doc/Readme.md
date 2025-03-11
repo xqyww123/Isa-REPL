@@ -31,7 +31,9 @@ pip install IsaREPL
 
 ```
 # merely an example:
-./repl_server.sh 127.0.0.1:6666 HOL ./tmp
+./repl_server.sh 127.0.0.1:6666 HOL ./tmp -o threads=16
+# Note, you must explicitly indicate the number of cpu cores that you want to use,
+# otherwise, Isabelle only takes 8 core by default
 ```
 
 Run `./repl_server.sh` to see the full explanation of the arguments and options.
@@ -49,6 +51,11 @@ To evaluate a whole theory file
 ./examples/eval_file.py 127.0.0.1:6666 $(isabelle getenv -b ISABELLE_HOME)/src/HOL/List.thy
 ```
 ## Notes
+
+### Known Issues
+
+The REPL server (or the Isabelle system) becomes unstable when the number of parallel threads exceeds 100.
+We suggest to launch multiple servers if your machine has more than 64 cpu cores, and give every server at most 64 cores by setting option `-o threads=64` 
 
 ### Documents
 
