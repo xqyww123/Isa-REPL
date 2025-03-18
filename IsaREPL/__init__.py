@@ -1,1 +1,1 @@
-from .IsaREPL import Client, REPLFail
+from .IsaREPL import Client, REPLFail, Position

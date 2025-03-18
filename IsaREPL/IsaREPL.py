@@ -2,8 +2,56 @@ import msgpack as mp
 import socket
 import os
 import signal
+from collections import namedtuple
 
 REPLFail = type('REPLFail', (Exception,), {})
+
+class Position:
+    def __init__(self, line, column, end_column, file):
+        self.line = line
+        self.column = column
+        self.end_column = end_column
+        self.file = file
+
+    def __str__(self):
+        return f"{self.file}:{self.line}:{self.column}:{self.end_column}"
+
+    def __repr__(self):
+        return f"{self.file}:{self.line}:{self.column}:{self.end_column}"
+
+    def __eq__(self, other):
+        if not isinstance(other, Position):
+            return False
+        return (self.line == other.line and 
+                self.column == other.column and 
+                self.end_column == other.end_column and 
+                self.file == other.file)
+    
+    def __hash__(self):
+        return hash((self.line, self.column, self.end_column, self.file))
+
+    @staticmethod
+    def from_s(position_str):
+        parts = position_str.split(':')
+        if len(parts) != 4:
+            raise ValueError("The string must be in the format: file:line:column:end_column")
+        file, line, column, end_column = parts
+        return Position(int(line), int(column), int(end_column), file)
+
+def unpack_position(data):  
+    line, column, end_column, tup3 = data
+    label, file, id = tup3
+    return Position(line, column, end_column, file)
+
+def repair_positions(data):
+    i = 0
+    for pos, src in data:
+        pos.column = i
+        for _, c in enumerate(src):
+            if c == '\n':
+                i = 0
+            else:
+                i += 1
 
 def is_list_of_strings(lst):
     if lst and isinstance(lst, list):
@@ -17,7 +65,7 @@ class Client:
     A client for connecting Isabelle REPL
     """
 
-    VERSION = '0.9.2'
+    VERSION = '0.9.3'
 
     def __init__(self, addr, thy_qualifier):
         """
@@ -153,7 +201,28 @@ class Client:
         mp.pack("\x05lex", self.cout)
         mp.pack(source, self.cout)
         self.cout.flush()
-        return Client._parse_control_(self.unpack.unpack())
+        ret = Client._parse_control_(self.unpack.unpack())
+        ret = [(unpack_position(pos), src) for pos, src in ret]
+        repair_positions(ret)
+        return ret
+
+    def fast_lex(self, source):
+        """
+        A faster but inaccurate version of `lex`.
+        `lex` has to load all imports of the target source in order to use the correct
+        set of Isar keywords (since libraries can define their own keywords).
+        This faster version just use the predefined system keywords of Isar, so it
+        doesn't need to load any imports but can fail to parse some user keywords.
+        """
+        if not isinstance(source, str):
+            raise ValueError("the argument source must be a string")
+        mp.pack("\x05lex'", self.cout)
+        mp.pack(source, self.cout)
+        self.cout.flush()
+        ret = Client._parse_control_(self.unpack.unpack())
+        ret = [(unpack_position(pos), src) for pos, src in ret]
+        repair_positions(ret)
+        return ret
 
     def plugin(self, name, ML, thy='Isa_REPL.Isa_REPL'):
         """
@@ -245,7 +314,8 @@ class Client:
                 # (the `theory XX imports AA begin ... end` block)
                 'is_theory': output[3][1],  # whether the state is within a theory block and at the
                 # toplevel of this block
-                'is_proof': output[3][2]  # whether the state is working on proving some goal
+                'is_proof': output[3][2],  # whether the state is working on proving some goal
+                'has_goal': output[3][3]  # whether the state has some goal to prove, or all goals are proven
             }],
             'level': output[4],  # The level of nesting context. It is some internal measure
             # and doesn't necessarily (but still roughly) reflect the
@@ -551,23 +621,23 @@ class Client:
         self.cout.flush()
         return Client._parse_control_(self.unpack.unpack())
 
-    def eval_file(self, path, line=~1, offst=0):
+    def eval_file(self, path, line=~1, column=0):
         """
         Evaluate the file at the given path.
         This method has the same return as the `eval` method.
-        Argument line and offset indicate the REPL to evaluate all code
-        until the first `offset` characters at the `line`, meaning the REPL
-        will stop at the position `line:offset`.
+        Argument line and column indicate the REPL to evaluate all code
+        until the first `column` characters at the `line`, meaning the REPL
+        will stop at the position `line:column`.
         """
         if not isinstance(path, str):
             raise ValueError("the argument `path` must be a string")
         if not isinstance(line, int):
             raise ValueError("the argument `line` must be an int")
-        if not isinstance(offst, int):
-            raise ValueError("the argument `offst` must be an int")
+        if not isinstance(column, int):
+            raise ValueError("the argument `column` must be an int")
         pos = None
         if line >= 0:
-            pos = (line, offst)
+            pos = (line, column)
         mp.pack("\x05eval", self.cout)
         mp.pack((path, pos), self.cout)
         self.cout.flush()

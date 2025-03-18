@@ -153,6 +153,14 @@ fun output cout pack x = (
   )
 end
 
+fun pos_packer pos =
+  let open MessagePackBinIO.Unpack MessagePackBinIO.Pack
+      val {line, offset, end_offset, props} = Position.dest pos
+      val {label, file, id} = props
+   in packTuple4 (packInt, packInt, packInt, packTuple3 (packString, packString, packString))
+      (line, offset, end_offset, (label, file, id))
+  end
+
 fun startup base_dir_of_theories thy0 addr0 =
   let val _ = if File.is_dir base_dir_of_theories
               then warning ("The base_dir_of_theories already exists. The shell may overwrite files.")
@@ -193,10 +201,10 @@ fun startup base_dir_of_theories thy0 addr0 =
 
           val (version, cin) = MessagePackBinIO.Unpack.doUnpack
                                           (MessagePackBinIO.Unpack.unpackString) cin
-          val _ = if version = "0.9.2" then ()
+          val _ = if version = "0.9.3" then ()
                   else (
                     output_err cout "The server is connected with a wrong version of the client.\n\
-                             \Please run `pip install \"IsaREPL==0.9.2\" --force-reinstall` to update your client."
+                             \Please run `pip install \"IsaREPL==0.9.3\" --force-reinstall` to update your client."
                   ; BinIO.StreamIO.flushOut cout
                   ; Socket.close conn
                   ; raise BAD_CONN)
@@ -243,7 +251,13 @@ fun startup base_dir_of_theories thy0 addr0 =
                      | "\005lex" => let
                                val (src, cin'') = doUnpack unpackString cin'
                                val rets = REPL.lex_commands (!cfg) src
-                               val _ = output cout (packList (packString o snd)) rets
+                               val _ = output cout (packList (packPair (pos_packer, packString))) rets
+                            in cin''
+                           end
+                     | "\005lex'" => let
+                               val (src, cin'') = doUnpack unpackString cin'
+                               val rets = REPL.fast_lex src
+                               val _ = output cout (packList (packPair (pos_packer, packString))) rets
                             in cin''
                            end
                      | "\005plugin" => let

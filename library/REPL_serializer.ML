@@ -19,9 +19,9 @@ open REPL
 
 local open MessagePackBinIO.Pack in
 
-fun flags_packer {is_toplevel, is_theory, is_proof}
-      = packTuple3 (packBool, packBool, packBool)
-                   (is_toplevel, is_theory, is_proof)
+fun flags_packer {is_toplevel, is_theory, is_proof, has_goal}
+      = packTuple4 (packBool, packBool, packBool, packBool)
+                   (is_toplevel, is_theory, is_proof, has_goal)
 
 fun message_type_packer NORMAL  = packInt 0
   | message_type_packer TRACING = packInt 1

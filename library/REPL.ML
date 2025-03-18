@@ -20,7 +20,8 @@ type plugin  = plugin_name * collector
 type flags = {
         is_toplevel: bool,
         is_theory  : bool,
-        is_proof   : bool
+        is_proof   : bool,
+        has_goal   : bool
 }
 type command_output = {
         command_name : string,
@@ -45,6 +46,7 @@ val init_repler : Path.T (*base_dir used to store outputs*)
                -> theory option -> unit
 val RE : cfg -> string -> command_outputs
 val lex_commands : cfg -> string -> (Position.T * string) list
+val fast_lex : string -> (Position.T * string) list
 
 val set_trace : bool -> unit
 val set_register_thy : bool -> unit
@@ -132,7 +134,8 @@ type message = message_type * string
 type flags = {
         is_toplevel: bool,
         is_theory  : bool,
-        is_proof   : bool
+        is_proof   : bool,
+        has_goal   : bool
 }
 
 type cfg = { thy_qualifier : string,
@@ -427,7 +430,9 @@ fun catch_state' wid plugin_output err command s : command_output = {
         flags   = {
               is_toplevel = Toplevel.is_toplevel s,
               is_theory   = Toplevel.is_theory s,
-              is_proof    = Toplevel.is_proof s
+              is_proof    = Toplevel.is_proof s,
+              has_goal    = Toplevel.is_proof s andalso
+                            not (Thm.no_prems (#goal (Proof.raw_goal (Toplevel.proof_of s))))
           },
         level   = Toplevel.level s,
         state   = trim_makrup (Toplevel.string_of_state s),
@@ -461,7 +466,9 @@ fun RE cfg source : command_outputs =
               flags   = {
                     is_toplevel = Toplevel.is_toplevel s,
                     is_theory   = Toplevel.is_theory s,
-                    is_proof    = Toplevel.is_proof s
+                    is_proof    = Toplevel.is_proof s,
+                    has_goal    = Toplevel.is_proof s andalso
+                                  not (Thm.no_prems (#goal (Proof.raw_goal (Toplevel.proof_of s))))
                 },
               level   = Toplevel.level s,
               state   = "",
@@ -562,6 +569,25 @@ fun lex_commands cfg source =
               | pos_of (h :: _) = snd h
          in map (fn syms => (pos_of syms, Symbol_Pos.implode syms)) ret
          :: Thread_Data.setmp evaluated_theories (SOME thys') parse srcs
+        end
+   in Symbol_Pos.explode (source, pos)
+   |> split_thy_headers
+   |> parse
+   |> flat
+  end
+
+(*without evaluating the target theory, it uses only known keywords from the Pure.thy.
+  Thus it is fast and stateless but the result can be inaccurate.*)
+fun fast_lex source =
+  let val pos = Position.make {
+                  line=1, offset=1, end_offset=1, props={label="", file="#REPL", id=""}}
+      fun parse [] = []
+        | parse (src::srcs) =
+        let val ret = lex_split true true pure_keywords Token.is_command_modifier (Token.is_kind Token.Command) src
+            fun pos_of [] = Position.none
+              | pos_of (h :: _) = snd h
+         in map (fn syms => (pos_of syms, Symbol_Pos.implode syms)) ret
+         :: parse srcs
         end
    in Symbol_Pos.explode (source, pos)
    |> split_thy_headers
