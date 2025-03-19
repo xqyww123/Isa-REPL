@@ -90,6 +90,7 @@ imports "Isa_REPL.Isa_REPL"
 begin
 ML \\<open>
 REPL.disable_output () ;
+Thy_Info.register_thy @{theory Auto_Sledgehammer} ;
 Thy_Info.register_thy @{theory Isa_REPL} ;
 Isabelle_Thread.join (REPL_Server.startup (Path.explode "$(printf '%b' $MASTER_DIR)") NONE "$(printf '%b' $ADDR)");
 error "IGNORE THIS ERROR"
@@ -99,7 +100,7 @@ EOF
 
 cat <<EOF > $DIR/ROOT
 session REPL$$ = "$(printf '%b' $BASE_SESSION)"
- + sessions Isa_REPL $formatted_l_values
+ + sessions Auto_Sledgehammer Isa_REPL $formatted_l_values
    theories REPL$$
 EOF
 

@@ -33,7 +33,7 @@ c.set_register_thy (False) # preventing the REPL to reigster he evaluated theori
 def is_empty(obj):
     return obj == [] or obj == ""
 
-ret = c.eval_file (target, 30, 918)
+ret = c.eval_file (target)
 print ('result:')
 print(ret)
 

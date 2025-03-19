@@ -1,2 +1,2 @@
-session Isa_REPL = Main +
+session Isa_REPL = Auto_Sledgehammer +
   theories Isa_REPL

@@ -65,7 +65,7 @@ class Client:
     A client for connecting Isabelle REPL
     """
 
-    VERSION = '0.9.3'
+    VERSION = '0.9.4'
 
     def __init__(self, addr, thy_qualifier):
         """
@@ -130,7 +130,7 @@ class Client:
             self.sock.close()
             self.sock = None
 
-    def eval(self, source):
+    def eval(self, source, timeout=None):
         """
         The `eval` method ONLY accepts **complete** commands ---
         It is strictly forbiddened to split a command into multiple fragments and
@@ -154,10 +154,18 @@ class Client:
 
         Note, `outputs` can be None if you call `set_trace(false)` which disables
         the output printing.
+
+        Timeout: the milliseconds to wait for the evaluation to finish.
         """
         if not isinstance(source, str):
             raise ValueError("the argument source must be a string")
-        mp.pack(source, self.cout)
+        if timeout is not None and not isinstance(timeout, int):
+            raise ValueError("the argument timeout must be an integer")
+        if timeout is None:
+            mp.pack(source, self.cout)
+        else:
+            mp.pack("\x05eval", self.cout)
+            mp.pack((source, timeout), self.cout)
         self.cout.flush()
         return self.unpack.unpack()
 
@@ -621,13 +629,15 @@ class Client:
         self.cout.flush()
         return Client._parse_control_(self.unpack.unpack())
 
-    def eval_file(self, path, line=~1, column=0):
+    def eval_file(self, path, line=~1, column=0, timeout=None):
         """
         Evaluate the file at the given path.
         This method has the same return as the `eval` method.
         Argument line and column indicate the REPL to evaluate all code
         until the first `column` characters at the `line`, meaning the REPL
         will stop at the position `line:column`.
+
+        Timeout: the milliseconds to wait for the evaluation to finish.
         """
         if not isinstance(path, str):
             raise ValueError("the argument `path` must be a string")
@@ -638,8 +648,8 @@ class Client:
         pos = None
         if line >= 0:
             pos = (line, column)
-        mp.pack("\x05eval", self.cout)
-        mp.pack((path, pos), self.cout)
+        mp.pack("\x05file", self.cout)
+        mp.pack((path, pos, timeout), self.cout)
         self.cout.flush()
         return Client._parse_control_(self.unpack.unpack())
 

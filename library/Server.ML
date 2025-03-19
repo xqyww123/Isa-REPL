@@ -201,10 +201,10 @@ fun startup base_dir_of_theories thy0 addr0 =
 
           val (version, cin) = MessagePackBinIO.Unpack.doUnpack
                                           (MessagePackBinIO.Unpack.unpackString) cin
-          val _ = if version = "0.9.3" then ()
+          val _ = if version = "0.9.4" then ()
                   else (
                     output_err cout "The server is connected with a wrong version of the client.\n\
-                             \Please run `pip install \"IsaREPL==0.9.3\" --force-reinstall` to update your client."
+                             \Please run `pip install \"IsaREPL==0.9.4\" --force-reinstall` to update your client."
                   ; BinIO.StreamIO.flushOut cout
                   ; Socket.close conn
                   ; raise BAD_CONN)
@@ -221,7 +221,9 @@ fun startup base_dir_of_theories thy0 addr0 =
           val cfg = Unsynchronized.ref { thy_qualifier = thy_qualifier,
                                          file = NONE,
                                          position_label = NONE,
-                                         additional_libs = [] }
+                                         additional_libs = [],
+                                         base_dir = base_dir_of_theories,
+                                         overwrite = false }
 
           fun loop cin =
             if BinIO.StreamIO.endOfStream cin
@@ -337,7 +339,9 @@ fun startup base_dir_of_theories thy0 addr0 =
                                val _ = cfg := { thy_qualifier=qualifier,
                                                 file = #file (!cfg),
                                                 position_label = #position_label (!cfg),
-                                                additional_libs = #additional_libs (!cfg)}
+                                                additional_libs = #additional_libs (!cfg),
+                                                base_dir = #base_dir (!cfg),
+                                                overwrite = #overwrite (!cfg)}
                                val _ = output cout packUnit ()
                             in cin''
                            end
@@ -370,12 +374,13 @@ fun startup base_dir_of_theories thy0 addr0 =
                             in output cout (packList packString) (map Context.theory_long_name thys)
                              ; cin''
                            end
-                     | "\005eval" => let
-                               val ((raw_path, pos), cin'') =
-                                      doUnpack (unpackPair (
+                     | "\005file" => let
+                               val ((raw_path, pos, timeout), cin'') =
+                                      doUnpack (unpackTuple3 (
                                           unpackString,
                                           unpackOption (
-                                            unpackPair (unpackInt, unpackInt))
+                                            unpackPair (unpackInt, unpackInt)),
+                                          unpackOption unpackInt
                                       )) cin'
                                val path = Path.explode raw_path
                                val session = REPL_Aux.parse_session_name path
@@ -383,7 +388,9 @@ fun startup base_dir_of_theories thy0 addr0 =
                                            of SOME s => { thy_qualifier = s,
                                                           file = SOME raw_path,
                                                           position_label = NONE,
-                                                          additional_libs = #additional_libs (!cfg)}
+                                                          additional_libs = #additional_libs (!cfg),
+                                                          base_dir = #base_dir (!cfg),
+                                                          overwrite = #overwrite (!cfg)}
                                             | _ => !cfg
                                val src = case pos
                                            of NONE => File.read path
@@ -396,16 +403,34 @@ fun startup base_dir_of_theories thy0 addr0 =
                                                 in take (l-1) lns
                                                 |> String.concatWith "\n"
                                                end
-                               val ret = REPL.RE cfg src
+                               val timeout = Option.map Time.fromMilliseconds timeout
+                               val ret = case timeout
+                                           of NONE   => REPL.RE cfg src
+                                            | SOME t => Timeout.apply t (REPL.RE cfg) src
                             in doPack REPL_Serialize.command_outputs_packer ret cout
                              ; cin''
+                           end
+                     | "\005eval" => let
+                               val ((src, timeout), cin'') =
+                                      doUnpack (unpackPair (
+                                          unpackString,
+                                          unpackOption unpackInt
+                                      )) cin'
+                               val timeout = Option.map Time.fromMilliseconds timeout
+                               val ret = case timeout
+                                           of NONE   => REPL.RE (!cfg) src
+                                            | SOME t => Timeout.apply t (REPL.RE (!cfg)) src
+                             in doPack REPL_Serialize.command_outputs_packer ret cout
+                              ; cin''
                            end
                      | "\005addlibs" => let
                                val (libs, cin'') = doUnpack (unpackList unpackString) cin'
                             in cfg := { thy_qualifier = #thy_qualifier (!cfg),
                                         file = #file (!cfg),
                                         position_label = #position_label (!cfg),
-                                        additional_libs = merge (op =) (#additional_libs (!cfg), libs) }
+                                        additional_libs = merge (op =) (#additional_libs (!cfg), libs),
+                                        base_dir = #base_dir (!cfg),
+                                        overwrite = #overwrite (!cfg)}
                              ; output cout packUnit ()
                              ; cin''
                            end

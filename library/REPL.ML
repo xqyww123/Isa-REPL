@@ -6,7 +6,16 @@ type message = message_type * string
 type cfg = { thy_qualifier : string,
              file : string option,
              position_label : string option,
-             additional_libs : string list }
+             additional_libs : string list,
+             base_dir : Path.T,
+             overwrite : bool (*Isa-REPL by default writes the evaluating script into a theory file
+                                under the base_dir. However, if the script already exists, Isa-REPL
+                                will not overwrite it. This option forces Isa-REPL to overwrite
+                                this file even when it exists.
+                                If you are evaluating an existing file, you should leave overwrite
+                                as false. But if you are evaluating some freshly generated file, you
+                                could turn on this option to overwrite the previous generations when
+                                you are repeatedly re-generating some theory.*) }
 type collector = cfg
               -> {current_command: Command_Span.span,
                   state: Toplevel.state, (*the state after executing the current command*)
@@ -141,7 +150,9 @@ type flags = {
 type cfg = { thy_qualifier : string,
              file : string option,
              position_label : string option,
-             additional_libs : string list }
+             additional_libs : string list,
+             base_dir : Path.T,
+             overwrite : bool }
 
 type collector = cfg
               -> {current_command: Command_Span.span,
@@ -191,7 +202,7 @@ val remove_plugin : (string -> plugins -> plugins) = AList.delete (op =)
 (** Worker ID **)
 
 type Session_ID = int
-val Session_ID = Thread_Data.var () : (Session_ID * Path.T * plugins) Thread_Data.var;
+val Session_ID = Thread_Data.var () : (Session_ID * plugins) Thread_Data.var;
 
 fun the_current_worker_ID () = Option.map #1 (Thread_Data.get Session_ID)
 
@@ -208,13 +219,13 @@ fun get_and_clean_message' wid =
 
 fun get_and_clean_message () =
   case Thread_Data.get Session_ID
-    of SOME (id, _, _) => get_and_clean_message' id
+    of SOME (id, _) => get_and_clean_message' id
      | NONE => []
 
 fun init_printers () =
   let fun output_fn typ fallback = (fn ms =>
             case Thread_Data.get Session_ID
-              of SOME (id, _, _) =>
+              of SOME (id, _) =>
                     Synchronized.change message_buffer
                         (Inttab.map_entry id (fn L => (typ, trim_makrup (implode ms)) :: L))
                | NONE => fallback ms )
@@ -320,7 +331,7 @@ fun add_evaluated_theories entry =
 fun add_global_theories entry =
   Synchronized.change global_theories (Symtab.update entry)
 
-fun init_thy ignore_imports (base_dir, {thy_qualifier, additional_libs,...}) source =
+fun init_thy ignore_imports {thy_qualifier, additional_libs, base_dir, ...} source =
   let val toks = Token.tokenize pure_keywords {strict = false} source
       val i = find_index is_theory_tok toks
    in if i = ~1
@@ -400,13 +411,24 @@ fun lex_split drop_first drop_if_no_meet kws ATTACH P source =
 
 val split_thy_headers = lex_split false false pure_keywords Token.is_command_modifier is_theory_tok
 
-fun parse_text cfg register_theory' state source =
+fun parse_text overwrite_decision
+               cfg register_theory' state source =
   let val thy = get_thy cfg state source
-   in if register_theory' andalso not (pointer_eq (Pure, thy))
-         andalso Resources.master_directory thy = fst cfg
-    then File.append (Path.append (Resources.master_directory thy)
-                                  (Path.explode (Context.theory_name {long=false} thy ^ ".thy")))
-                     (Symbol_Pos.content source)
+      val is_new_theory = case try Toplevel.theory_of state
+                            of SOME thy' => Context.theory_long_name thy' =
+                                            Context.theory_long_name thy
+                             | NONE => true
+      val path = Path.append (Resources.master_directory thy)
+                             (Path.explode (Context.theory_name {long=false} thy ^ ".thy"))
+      val overwrite =  register_theory' andalso not (pointer_eq (Pure, thy))
+               andalso Resources.master_directory thy = #base_dir cfg
+               andalso (if is_new_theory
+                      then not (File.is_file path) orelse #overwrite cfg
+                      else ! overwrite_decision )
+      val _ = overwrite_decision := overwrite
+   in if overwrite
+    then ( if File.is_file path then File.rm path else ()
+         ; File.append path (Symbol_Pos.content source) )
     else ()
     ; parse_text' thy (K thy) source
    |> filter_out (Toplevel.is_ignored o fst)
@@ -432,6 +454,7 @@ fun catch_state' wid plugin_output err command s : command_output = {
               is_theory   = Toplevel.is_theory s,
               is_proof    = Toplevel.is_proof s,
               has_goal    = Toplevel.is_proof s andalso
+                            can Proof.raw_goal (Toplevel.proof_of s) andalso
                             not (Thm.no_prems (#goal (Proof.raw_goal (Toplevel.proof_of s))))
           },
         level   = Toplevel.level s,
@@ -446,7 +469,7 @@ fun RE cfg source : command_outputs =
      | SOME (s0,cnt,(trace, register_theory'),H) =>
   case Thread_Data.get Session_ID
     of NONE                => {outputs=NONE, error=SOME "INTERNAL ERROR: worker ID lost"}
-     | SOME (wid, base_dir, plugins) =>
+     | SOME (wid, plugins) =>
   let val pos = Position.make {
                   line=1, offset=1, end_offset=1,
                   props= { label = the_default "" (#position_label cfg),
@@ -468,6 +491,7 @@ fun RE cfg source : command_outputs =
                     is_theory   = Toplevel.is_theory s,
                     is_proof    = Toplevel.is_proof s,
                     has_goal    = Toplevel.is_proof s andalso
+                                  can Proof.raw_goal (Toplevel.proof_of s) andalso
                                   not (Thm.no_prems (#goal (Proof.raw_goal (Toplevel.proof_of s))))
                 },
               level   = Toplevel.level s,
@@ -478,9 +502,10 @@ fun RE cfg source : command_outputs =
 
       fun mk_command_outputs a b = {outputs = if trace then SOME (rev a) else NONE, error=b} : command_outputs
 
+      val overwrite_decision = Unsynchronized.ref false
       fun loop ret _ [] [] s = (mk_command_outputs ret NONE, s)
         | loop ret errs [] (src::srcs) s =
-            loop ret errs (parse_text (base_dir, cfg) register_theory' s src) srcs s
+            loop ret errs (parse_text overwrite_decision cfg register_theory' s src) srcs s
         | loop ret errs ((tr,current_cmd)::trs) srcs s =
             case Toplevel.command_errors false tr s
               of (err, NONE)    =>
@@ -524,12 +549,7 @@ val ID_counter = Counter.make ()
 
 fun init_repler base_base thy =
   let val id = ID_counter ()
-      val base_dir = Path.append base_base (Path.basic (string_of_int id))
-      val _ = if File.is_dir base_dir
-              then ()
-              else ( if File.exists base_dir then File.rm base_dir else ();
-                     OS.FileSys.mkDir (File.platform_path base_dir) )
-   in Thread_Data.put Session_ID (SOME (id, base_dir, []))
+   in Thread_Data.put Session_ID (SOME (id, []))
     ; Synchronized.change message_buffer (Inttab.update_new (id, []))
     ; Thread_Data.put state (SOME (Toplevel.make_state thy, 0, (true, true), []))
   end
@@ -549,7 +569,7 @@ fun split_commands cfg wid state source =
 fun lex_commands cfg source =
   case Thread_Data.get Session_ID
     of NONE         => raise REPL_fail "INTERNAL ERROR: worker ID lost"
-     | SOME (_,base_dir,_) =>
+     | SOME (_,_) =>
   case Thread_Data.get state
     of NONE              => raise REPL_fail  "INTERNAL ERROR: state lost"
      | SOME (s0,cnt,_,_) =>
@@ -557,7 +577,7 @@ fun lex_commands cfg source =
                   line=1, offset=1, end_offset=1, props={label="", file="#REPL", id=string_of_int cnt}}
       fun parse [] = []
         | parse (src::srcs) =
-        let val thy = case init_thy true (base_dir, cfg) src
+        let val thy = case init_thy true cfg src
                         of SOME thy => thy
                          | NONE => the_default Pure (try Toplevel.theory_of s0)
             val kws = Thy_Header.get_keywords thy
@@ -600,14 +620,14 @@ fun fast_lex source =
 fun register_plugin plugin =
   case Thread_Data.get Session_ID
     of NONE               => raise REPL_fail "INTERNAL ERROR: worker ID lost"
-     | SOME (wid,base_dir,plugins) =>
-        Thread_Data.put Session_ID (SOME (wid, base_dir, add_plugin plugin plugins))
+     | SOME (wid,plugins) =>
+        Thread_Data.put Session_ID (SOME (wid, add_plugin plugin plugins))
 
 fun delete_plugin name =
   case Thread_Data.get Session_ID
     of NONE               => raise REPL_fail "INTERNAL ERROR: worker ID lost"
-     | SOME (wid,base_dir,plugins) =>
-        Thread_Data.put Session_ID (SOME (wid, base_dir, remove_plugin name plugins))
+     | SOME (wid,plugins) =>
+        Thread_Data.put Session_ID (SOME (wid, remove_plugin name plugins))
 
 (** State Rollback II **)
 
@@ -633,7 +653,7 @@ fun clean_state () =
 fun rollback_state cfg name =
   case Thread_Data.get Session_ID
     of NONE                => raise REPL_fail  "INTERNAL ERROR: state lost"
-     | SOME (wid, _, plugins) =>
+     | SOME (wid, plugins) =>
   case Thread_Data.get state
     of NONE             => raise REPL_fail  "INTERNAL ERROR: state lost"
      | SOME (s,cnt,t,H) =>
@@ -657,7 +677,7 @@ fun list_states () =
 fun list_states' cfg () =
   case Thread_Data.get Session_ID
     of NONE                => raise REPL_fail  "INTERNAL ERROR: state lost"
-     | SOME (wid, _,plugins) =>
+     | SOME (wid, plugins) =>
   case Thread_Data.get state
     of NONE           => raise REPL_fail  "INTERNAL ERROR: state lost"
      | SOME (_,_,_,H) => map (apsnd (fn s' =>
@@ -708,10 +728,10 @@ fun sledgehammer timeout' =
         in (if timeout' <= 0 then I else Timeout.apply_physical timeout) (fn () => let
            val ctxt = Proof.context_of stat
                    |> (if timeout' <= 0 then I 
-                       else Config.map REPL_Sledgehammer_Solver.sledgehammer_params
+                       else Config.map Phi_Sledgehammer_Solver.sledgehammer_params
                                  (fn s => "timeout = " ^ string_of_int timeout' ^ ", " ^ s))
            val goal = Proof.goal stat |> #goal
-           val (prf, _) = REPL_Sledgehammer_Solver.search_proof ctxt goal
+           val (prf, _) = Phi_Sledgehammer_Solver.auto Sledgehammer_Fact.no_fact_override NONE ctxt goal
         in prf
        end) ()
        end

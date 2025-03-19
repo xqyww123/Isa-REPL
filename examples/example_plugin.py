@@ -40,7 +40,7 @@ let open MessagePackBinIO.Pack
             val vars = Term.add_frees (Thm.prop_of goal) []
          in packPairList (packString, packType ctxt) vars
         end
- in fn {state=s,...} => (
+ in fn cfg => fn {state=s,...} => (
         (if Toplevel.is_proof s then SOME (collect_vars s) else NONE),
         NONE) (*this plugin doesn't alter teh evaluation state*)
 end
