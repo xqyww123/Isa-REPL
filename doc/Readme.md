@@ -18,7 +18,8 @@ Unofficial support for Isabelle's Read-Eval-Print-Loop.
 
 ## Installation
 
-We **only** support [Isabelle2023](https://isabelle.in.tum.de/website-Isabelle2023/index.html) and [Isabelle2024](https://isabelle.in.tum.de/website-Isabelle2024/index.html).
+We **only** support [Isabelle2024](https://isabelle.in.tum.de/website-Isabelle2024/index.html).
+Since Isabelle2025 is going to release, the support for Isabelle2023 will not be updated any more.
 
 Ensuring `<ISABELLE-BASE-DIRECTORY>/bin` is in your `$PATH` environment
 ```
