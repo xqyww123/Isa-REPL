@@ -100,7 +100,7 @@ EOF
 
 cat <<EOF > $DIR/ROOT
 session REPL$$ = "$(printf '%b' $BASE_SESSION)"
- + sessions Auto_Sledgehammer Isa_REPL $formatted_l_values
+ + sessions Isa_REPL Auto_Sledgehammer $formatted_l_values
    theories REPL$$
 EOF
 
