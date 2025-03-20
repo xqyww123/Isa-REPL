@@ -7,7 +7,7 @@ name = "IsaREPL"
 version = "0.9.4"
 description = "Isabelle REPL client"
 readme = "README.md"
-license = {file = "LICENSE"}
+license = "LGPL-2.1-or-later"
 authors = [
     { name="Qiyuan Xu", email="xqyww123@gmail.com" },
 ]

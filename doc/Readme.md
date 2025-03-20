@@ -14,6 +14,7 @@ Unofficial support for Isabelle's Read-Eval-Print-Loop.
 - Parsing terms & Retrival of lemmas ([example](./examples/example_parse.py))
 - Sledgehammer ([example](./examples/example_sledgehammer.py))
 - Retrivial of contextual information including assumptions, local facts, fixed terms, fixed types, and goals, in either the pretty-printed form or S expression ([example](./examples/example_context.py)).
+- Convertion between Isabelle's ASCII and Unicode ([example](./examples/example_pretty_unicode.py))
 
 ## Installation
 
