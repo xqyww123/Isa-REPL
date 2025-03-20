@@ -222,8 +222,7 @@ fun startup base_dir_of_theories thy0 addr0 =
                                          file = NONE,
                                          position_label = NONE,
                                          additional_libs = [],
-                                         base_dir = base_dir_of_theories,
-                                         overwrite = false }
+                                         import_dir = NONE }
 
           fun loop cin =
             if BinIO.StreamIO.endOfStream cin
@@ -266,7 +265,7 @@ fun startup base_dir_of_theories thy0 addr0 =
                                val (thy, cin'') = doUnpack unpackString cin'
                                val (name, cin'') = doUnpack unpackString cin''
                                val (src, cin'') = doUnpack unpackString cin''
-                               val [thy] = REPL.thy_loader "HOL" [thy]
+                               val [thy] = REPL.thy_loader NONE "HOL" [thy]
                                val plugin = (name, compile_plugin (Context.Theory thy) src)
                                val _ = REPL.register_plugin plugin
                                val _ = output cout packUnit ()
@@ -340,8 +339,7 @@ fun startup base_dir_of_theories thy0 addr0 =
                                                 file = #file (!cfg),
                                                 position_label = #position_label (!cfg),
                                                 additional_libs = #additional_libs (!cfg),
-                                                base_dir = #base_dir (!cfg),
-                                                overwrite = #overwrite (!cfg)}
+                                                import_dir = #import_dir (!cfg) }
                                val _ = output cout packUnit ()
                             in cin''
                            end
@@ -362,7 +360,7 @@ fun startup base_dir_of_theories thy0 addr0 =
                            end
                      | "\005ML" => let
                                val ((thy,src), cin'') = doUnpack (unpackPair (unpackString,unpackString)) cin'
-                               val [thy] = REPL.thy_loader "HOL" [thy]
+                               val [thy] = REPL.thy_loader NONE "HOL" [thy]
                             in run_ML (Context.Theory thy) src
                              ; output cout packBool true
                              ; cin''
@@ -370,7 +368,7 @@ fun startup base_dir_of_theories thy0 addr0 =
                      | "\005load" => let
                                val ((thy_qualifier, targets), cin'') =
                                     doUnpack (unpackPair (unpackString, unpackList unpackString)) cin'
-                               val thys = REPL.thy_loader thy_qualifier targets
+                               val thys = REPL.thy_loader NONE thy_qualifier targets
                             in output cout (packList packString) (map Context.theory_long_name thys)
                              ; cin''
                            end
@@ -384,14 +382,13 @@ fun startup base_dir_of_theories thy0 addr0 =
                                       )) cin'
                                val path = Path.explode raw_path
                                val session = REPL_Aux.parse_session_name path
-                               val cfg = case session
-                                           of SOME s => { thy_qualifier = s,
-                                                          file = SOME raw_path,
-                                                          position_label = NONE,
-                                                          additional_libs = #additional_libs (!cfg),
-                                                          base_dir = #base_dir (!cfg),
-                                                          overwrite = #overwrite (!cfg)}
-                                            | _ => !cfg
+                               val cfg = { thy_qualifier =
+                                                (case session of SOME s => s
+                                                               | _ => #thy_qualifier (!cfg)),
+                                           file = SOME raw_path,
+                                           position_label = NONE,
+                                           additional_libs = #additional_libs (!cfg),
+                                           import_dir = SOME (Path.dir path) }
                                val src = case pos
                                            of NONE => File.read path
                                             | SOME (l,n) => let
@@ -411,10 +408,11 @@ fun startup base_dir_of_theories thy0 addr0 =
                              ; cin''
                            end
                      | "\005eval" => let
-                               val ((src, timeout), cin'') =
-                                      doUnpack (unpackPair (
+                               val ((src, timeout, import_dir), cin'') =
+                                      doUnpack (unpackTuple3 (
                                           unpackString,
-                                          unpackOption unpackInt
+                                          unpackOption unpackInt,
+                                          unpackOption unpackString
                                       )) cin'
                                val timeout = Option.map Time.fromMilliseconds timeout
                                val ret = case timeout
@@ -429,8 +427,7 @@ fun startup base_dir_of_theories thy0 addr0 =
                                         file = #file (!cfg),
                                         position_label = #position_label (!cfg),
                                         additional_libs = merge (op =) (#additional_libs (!cfg), libs),
-                                        base_dir = #base_dir (!cfg),
-                                        overwrite = #overwrite (!cfg)}
+                                        import_dir = #import_dir (!cfg) }
                              ; output cout packUnit ()
                              ; cin''
                            end
@@ -456,9 +453,11 @@ fun startup base_dir_of_theories thy0 addr0 =
             end
        in Isabelle_Thread.fork (  Isabelle_Thread.params "REPL-worker"
                                 |> Isabelle_Thread.interrupts )
-                               (fn () => ( REPL.init_repler base_dir_of_theories thy0
-                                         ; Thread_Data.put sockets (SOME (cin, cout))
-                                         ; loop cin ))
+                               (fn () => (
+                REPL.init_repler base_dir_of_theories thy0
+              ; Thread_Data.put sockets (SOME (cin, cout))
+              ; loop cin
+           ))
          ; ()
       end
       handle BAD_CONN => () )
