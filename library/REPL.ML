@@ -226,6 +226,7 @@ fun init_printers () =
     ; Private_Output.warning_fn := output_fn WARNING (!Private_Output.warning_fn)
   end
 
+
 val (origin_writeln, origin_tracing, origin_warning) =
     (!Private_Output.writeln_fn, !Private_Output.tracing_fn, !Private_Output.warning_fn)
 val _ = init_printers ()
@@ -268,9 +269,11 @@ fun is_theory_tok tok = Token.is_kind Token.Command tok andalso Token.content_of
 
 val loader_locker = Synchronized.var "REPL theory loader locker" ()
 
-fun thy_loader import_dir thy_qualifier targets =
-  let val targets = map ( Resources.import_name thy_qualifier Path.root
-                       #> #theory_name ) targets
+fun thy_loader import_dir thy_qualifier targets_str =
+  let val cwd = Synchronized.change_result loader_locker (fn () =>
+                    (OS.FileSys.getDir (), ()))
+      val targets = map (Resources.import_name thy_qualifier (the_default Path.root import_dir))
+                        targets_str
       val evaluated_theories = the_default Symtab.empty (Thread_Data.get evaluated_theories)
       val can_load = Execution.is_running Document_ID.none
       fun is_loaded import =
@@ -280,11 +283,18 @@ fun thy_loader import_dir thy_qualifier targets =
 
 
       val _ = Synchronized.change loader_locker (fn () =>
-        let val targets = filter_out is_loaded targets
+        let val targets = filter_out (is_loaded o #theory_name) targets
             val _ = if not can_load andalso not (null targets)
-                    then raise REPL_fail ("Fail to load " ^ space_implode ", " targets)
+                    then raise REPL_fail (
+                              "Fail to load " ^ space_implode ", " (map #theory_name targets))
                     else ()
-            val cwd = OS.FileSys.getDir ()
+            val target_groups = partition_eq (op = o apply2 #master_dir) targets
+            fun load_group works = (
+                OS.FileSys.chDir (Path.implode (#master_dir (hd works)))
+              ; if null targets
+                then ()
+                else (Thy_Info.use_theories (Options.default ()) thy_qualifier
+                                            (map (rpair Position.none o #theory_name) works) ; ()))
          (* fun seg_load L =
               if null L
               then ()
@@ -293,12 +303,7 @@ fun thy_loader import_dir thy_qualifier targets =
                                         (map (rpair Position.none) this)
                      ; seg_load next
                    end *)
-         in \<^try>\<open> (
-            (case import_dir of SOME dir => OS.FileSys.chDir (Path.implode dir) | _ => ())
-          ; if null targets
-            then ()
-            else (Thy_Info.use_theories (Options.default ()) thy_qualifier
-                                        (map (rpair Position.none) targets) ; ()) )
+         in \<^try>\<open> List.app load_group target_groups
             finally
               OS.FileSys.chDir cwd \<close>
             (* seg_load targets *)
@@ -316,7 +321,7 @@ fun thy_loader import_dir thy_qualifier targets =
            | NONE =>
          raise REPL_fail ("Bad theory import " ^ import)
         )
-   in map load' targets
+   in map (load' o #theory_name) targets
   end
 
 fun add_evaluated_theories entry =
@@ -408,8 +413,7 @@ fun lex_split drop_first drop_if_no_meet kws ATTACH P source =
 
 val split_thy_headers = lex_split false false pure_keywords Token.is_command_modifier is_theory_tok
 
-fun parse_text overwrite_decision
-               cfg register_theory' state source =
+fun parse_text cfg register_theory' state source =
   let val thy = get_thy cfg state source
    in if register_theory' andalso not (pointer_eq (Pure, thy))
          andalso Resources.master_directory thy = fst cfg
@@ -435,7 +439,7 @@ val trim_err = map (trim_makrup o #2 o #1)
 fun catch_state' wid plugin_output err command s : command_output = {
         command_name = command,
         output  = get_and_clean_message' wid,
-        latex   = Toplevel.output_of s,
+        latex   = NONE (*Toplevel.output_of s*),
         flags   = {
               is_toplevel = Toplevel.is_toplevel s,
               is_theory   = Toplevel.is_theory s,
@@ -461,7 +465,7 @@ fun RE cfg source : command_outputs =
                   line=1, offset=1, end_offset=1,
                   props= { label = the_default "" (#position_label cfg),
                            file = the_default "#REPL" (#file cfg),
-                           id=string_of_int cnt }
+                           id="" }
                 }
       val srcs = Symbol_Pos.explode (source, pos)
               |> split_thy_headers
@@ -489,10 +493,9 @@ fun RE cfg source : command_outputs =
 
       fun mk_command_outputs a b = {outputs = if trace then SOME (rev a) else NONE, error=b} : command_outputs
 
-      val overwrite_decision = Unsynchronized.ref false
       fun loop ret _ [] [] s = (mk_command_outputs ret NONE, s)
         | loop ret errs [] (src::srcs) s =
-            loop ret errs (parse_text overwrite_decision (base_dir, cfg) register_theory' s src) srcs s
+            loop ret errs (parse_text (base_dir, cfg) register_theory' s src) srcs s
         | loop ret errs ((tr,current_cmd)::trs) srcs s =
             case Toplevel.command_errors false tr s
               of (err, NONE)    =>
@@ -567,7 +570,7 @@ fun lex_commands cfg source =
     of NONE              => raise REPL_fail  "INTERNAL ERROR: state lost"
      | SOME (s0,cnt,_,_) =>
   let val pos = Position.make {
-                  line=1, offset=1, end_offset=1, props={label="", file="#REPL", id=string_of_int cnt}}
+                  line=1, offset=1, end_offset=1, props={label="", file="#REPL", id=""}}
       fun parse [] = []
         | parse (src::srcs) =
         let val thy = case init_thy true (base_dir, cfg) src
@@ -649,7 +652,7 @@ fun rollback_state cfg name =
      | SOME (wid, _, plugins) =>
   case Thread_Data.get state
     of NONE             => raise REPL_fail  "INTERNAL ERROR: state lost"
-     | SOME (s,cnt,t,H) =>
+     | SOME (_,cnt,t,H) =>
      case AList.lookup (op =) H name
        of NONE => raise REPL_fail ("Historical state " ^ name ^ " is not found.")
         | SOME s' => let
