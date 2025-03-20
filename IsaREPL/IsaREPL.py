@@ -3,8 +3,64 @@ import socket
 import os
 import signal
 from collections import namedtuple
+import re
 
 REPLFail = type('REPLFail', (Exception,), {})
+
+
+def _load_symbols(path, symbols={}, reverse_symbols={}):
+    """
+    Load Isabelle symbol file
+    Return: (A dictionary from ASCII symbol to unicode symbol, and the reverse dictionary)
+    """
+    if not isinstance(path, str):
+        raise ValueError("the argument path must be a string")
+    if not os.path.exists(path):
+        return symbols, reverse_symbols
+    with open(path, 'r', encoding='utf-8') as file:
+        for line in file:
+            # Every line has a form like `\<odiv>            code: 0x002A38   font: PhiSymbols   group: operator   abbrev: (-:)`
+            # Here we extract the `\<odiv>` part as a string and the `0x002A38` part as a character
+            # Skip comments and empty lines
+            line = line.strip()
+            if not line or line.startswith('#'):
+                continue
+            
+            # Parse the line to extract symbol and code point
+            parts = line.split()
+            
+            # Extract the symbol name (like \<odiv>)
+            symbol = parts[0]
+            
+            # Find the code point (format can be either "code: 0x002A38" or "code:0x002A38")
+            code_point = None
+            for i, part in enumerate(parts[1:], 1):  # Start index at 1 since we're iterating from parts[1:]
+                if part.startswith('code:'):
+                    # Handle the case where there's no space after "code:"
+                    if ':' in part and len(part) > 5:  # "code:" is 5 chars
+                        code_point = part.split(':', 1)[1].strip()
+                    # Otherwise, the hex value should be in the next part
+                    elif i < len(parts) - 1:  # Check if there's a next element
+                        code_point = parts[i + 1].strip()
+                    break
+            
+            if symbol and code_point:
+                try:
+                    # Convert hex code point to unicode character
+                    unicode_char = chr(int(code_point, 16))
+                    # Add to dictionaries
+                    symbols[symbol] = unicode_char
+                    reverse_symbols[unicode_char] = symbol
+                except ValueError:
+                    # Skip if code point is invalid
+                    continue
+    return symbols, reverse_symbols
+
+isabelle_home = os.popen("isabelle getenv -b ISABELLE_HOME").read().strip()
+isabelle_home_user = os.popen("isabelle getenv -b ISABELLE_HOME_USER").read().strip()
+SYMBOLS, REVERSE_SYMBOLS = {}, {}
+for file in [f"{isabelle_home}/etc/symbols", f"{isabelle_home_user}/etc/symbols"]:
+    SYMBOLS, REVERSE_SYMBOLS = _load_symbols(file, SYMBOLS, REVERSE_SYMBOLS)
 
 class Position:
     def __init__(self, line, column, end_column, file):
@@ -684,3 +740,33 @@ class Client:
         Kill the entire server
         """
         os.kill(self.pid, signal.SIGKILL)
+
+    @staticmethod
+    def pretty_unicode(src):
+        """
+        Argument src: Any script that uses Isabelle's ASCII notation like `\\<Rightarrow>`
+        Return: unicode version of `src`
+        """
+        # map every substring `s` in src to SYMBOLS[s] if s in SYMBOLS, otherwise s
+        # Use a regular expression to find all potential Isabelle symbols
+        pattern = r'\\<[^>]+>'
+        
+        # Function to replace each match with its Unicode equivalent if available
+        def replace_symbol(match):
+            symbol = match.group(0)
+            return SYMBOLS.get(symbol, symbol)
+        
+        # Use re.sub to efficiently perform all replacements at once
+        return re.sub(pattern, replace_symbol, src)
+
+    @staticmethod
+    def ascii_of_unicode(src):
+        """
+        Argument src: Any unicode string
+        Return: Isabelle's ASCII version of `src`.
+        This method is the reverse of `pretty_unicode`.
+        """
+        # map every character `c` in `src` to REVERSE_SYMBOLS[c] if c in REVERSE_SYMBOLS, otherwise c
+        # Use str.translate with a translation table for maximum efficiency
+        trans_table = str.maketrans(REVERSE_SYMBOLS)
+        return src.translate(trans_table)
