@@ -186,7 +186,7 @@ class Client:
             self.sock.close()
             self.sock = None
 
-    def eval(self, source, timeout=None):
+    def eval(self, source, timeout=None, import_dir=None):
         """
         The `eval` method ONLY accepts **complete** commands ---
         It is strictly forbiddened to split a command into multiple fragments and
@@ -217,11 +217,11 @@ class Client:
             raise ValueError("the argument source must be a string")
         if timeout is not None and not isinstance(timeout, int):
             raise ValueError("the argument timeout must be an integer")
-        if timeout is None:
+        if timeout is None and import_dir is None:
             mp.pack(source, self.cout)
         else:
             mp.pack("\x05eval", self.cout)
-            mp.pack((source, timeout), self.cout)
+            mp.pack((source, timeout, import_dir), self.cout)
         self.cout.flush()
         return self.unpack.unpack()
 
