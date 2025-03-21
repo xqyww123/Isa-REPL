@@ -1,6 +1,15 @@
 signature REPL_AUX = sig
 
+(*Given a path to a file, `parse_session_name` tries to find the name of the session to which
+  the file belongs*)
 val parse_session_name : Path.T -> string option
+val collect_thy_dirs : Path.T list -> Path.T list
+val session_theory_infos :
+      ( {deps: string list, theories: string list} Symtab.table
+      * (Thy_Header.header * Path.T) Symtab.table
+      ) lazy
+
+val parse_thy_header : Path.T -> Thy_Header.header list
 
 end
 
@@ -57,10 +66,13 @@ val session_parser =
       Scan.repeat document_files --
       Scan.repeat export_files --
       Scan.optional export_classpath []))
-  >> (fn (((((session, _), _), dir), ((((((_, theories), _), _), _), _)))) =>
+  >> (fn (((((session, _), _), dir), ((((((((((parent, _), _), sessions), _), theories), _), _), _), _)))) =>
     let val dir = Path.explode (Input.string_of dir)
         fun parse_thy path = Path.expand (dir + Path.explode (Input.string_of path))
-     in (session, map (map parse_thy o snd) theories |> flat)
+        val deps = map fst (the_list parent @ sessions)
+     in (session,
+         map (map parse_thy o snd) theories |> flat,
+         deps)
     end )
 
 val ROOT = Path.explode("ROOT")
@@ -89,7 +101,7 @@ fun find_session input =
             then auto NONE (rev (Token.eof :: buf) :: ret) (tok::toks)
             else auto (SOME (tok::buf)) ret toks
    in auto NONE [] toks
-   |> map (session_parser #> fst)
+   |> map session_parser
   end
 
 end
@@ -100,10 +112,11 @@ fun parse_session_name path =
       fun find top dir =
         case try ( File.read
                 #> Input.string
-                #> find_session
+                #> find_session            
+                #> map fst
                  ) (dir + ROOT)
           of SOME sessions => sessions
-              |> get_first (fn (session, thys) =>
+              |> get_first (fn (session, thys, _) =>
                     if exists (fn thy => dir + thy = target) thys
                     then SOME session
                     else NONE)
@@ -111,7 +124,7 @@ fun parse_session_name path =
                           |> Option.mapPartial (fn dir' =>
                                 case find false dir'
                                   of NONE => if top andalso (case sessions of [_] => true | _ => false)
-                                             then SOME (fst (hd sessions))
+                                             then SOME (#1 (hd sessions))
                                              else NONE
                                    | some => some)
                    | some => some)
@@ -120,6 +133,120 @@ fun parse_session_name path =
    in try Path.dir target
    |> Option.mapPartial (find true)
   end
+
+fun is_comment s =
+  let val i = Unsynchronized.ref 0
+      val sz = size s
+      val ret = Unsynchronized.ref false
+   in while !i < sz do (
+      ( case String.sub (s, !i)
+          of #" " => ()
+           | #"#" => (ret := true; i := sz)
+           | _    => i := sz )
+      ; i := !i + 1
+      )
+    ; !ret
+  end
+
+fun collect_thy_dirs0 [] = []
+  | collect_thy_dirs0 paths =
+      let val new_dirs = maps (fn path =>
+                  let val roots = Path.append path (Path.basic "ROOTS")
+                   in if File.is_file roots
+                    then File.read_lines roots
+                      |> filter_out is_comment
+                      |> map (fn name => Path.expand (Path.append path (Path.explode name)))
+                    else []
+                  end
+                ) paths
+              |> distinct (op =)
+              |> subtract (op =) paths
+       in new_dirs @ collect_thy_dirs0 new_dirs
+      end
+fun collect_thy_dirs paths = paths @ collect_thy_dirs0 paths
+
+fun parse_thy_header path =
+  let val pos = Position.make {
+                  line=1, offset=1, end_offset=1,
+                  props= { label = "", file = Path.implode path, id="" }
+                }
+   in Symbol_Pos.explode (File.read path, pos)
+   |> REPL.split_thy_headers
+   |> map (Token.tokenize REPL.pure_keywords {strict=false})
+   |> map_filter (try (Thy_Header.read_tokens Position.none))
+  end
+
+fun has_slash s =
+  let val sz = size s
+      val i = Unsynchronized.ref 0
+      val ret = Unsynchronized.ref false
+   in while !i < sz do (
+        if String.sub (s, !i) = #"/"
+        then (ret := true; i := sz)
+        else i := !i + 1 )
+    ; !ret
+  end
+
+fun mk_session_info paths (*Isabelle components*) =
+  let val dirs = collect_thy_dirs paths
+   in fold (fn path0 =>
+         let val path = Path.append path0 (Path.basic "ROOT")
+          in if File.is_file path
+             then let
+             val sessions = File.read path
+                         |> Input.string
+                         |> find_session
+                         |> map fst
+          in fold (fn (sname, thys, deps) => fn (sinfo, tinfo) =>
+            let val headerss = map_filter (fn thy =>
+                        try (` parse_thy_header) (path0 + Path.ext "thy" thy)) thys
+                val (tinfo', thys') = fold (fn (headers,path) =>
+                      fold (fn header => fn (tinfo, thys) =>
+                        let fun qualify_name name =
+                                   if Long_Name.is_qualified name
+                                   then name
+                                   else Long_Name.qualify sname name
+                            fun parse_import name =
+                                  if has_slash name
+                                  then parse_thy_header (path0 + Path.ext "thy" (Path.explode name))
+                                    |> hd
+                                    |> #name
+                                    |> fst
+                                    |> qualify_name
+                                  else qualify_name name
+                            val header = { name = #name header,
+                                           imports = map_filter (try (apfst parse_import)) (#imports header),
+                                           keywords = #keywords header }
+                            val name = qualify_name (fst (#name header))
+                         in (Symtab.update (name, (header, path)) tinfo,
+                             insert (op =) name thys)
+                        end ) headers
+                    ) headerss (tinfo, [])
+             in (Symtab.update_new (sname, {deps=deps, theories=thys'}) sinfo,
+                 tinfo')
+            end
+           ) sessions
+         end else I
+         end
+      ) dirs (Symtab.empty, Symtab.empty)
+  end
+
+val session_theory_infos = Lazy.lazy (fn () => (
+    let val etc_components = Path.explode "etc/components"
+        val components = [getenv "ISABELLE_HOME_USER", getenv "ISABELLE_HOME"]
+                          |> map (fn s => Path.expand (Path.append (Path.explode s) etc_components))
+                          |> maps (fn path =>
+                              if File.is_file path
+                              then File.read_lines path
+                                |> filter_out is_comment
+                              else [] )
+                          |> insert (op =) (getenv "ISABELLE_HOME" ^ "/src/HOL")
+                          |> insert (op =) (getenv "ISABELLE_HOME" ^ "/src/Pure")
+                          |> insert (op =) (getenv "ISABELLE_HOME" ^ "/src/Tool")
+                          |> map Path.explode
+     in mk_session_info components
+    end
+  ))
 
 
 end
