@@ -115,6 +115,11 @@ val evaluated_theories : theory Symtab.table Thread_Data.var
 val add_evaluated_theories : string * theory -> unit
 val add_global_theories : string * theory -> unit
 
+(* Internal *)
+
+val split_thy_headers : Symbol_Pos.T list -> Symbol_Pos.T list list
+val pure_keywords : Keyword.keywords
+
 end
 
 structure REPL : REPL = struct
