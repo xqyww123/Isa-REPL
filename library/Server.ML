@@ -414,10 +414,24 @@ fun startup base_dir_of_theories thy0 addr0 =
                                           unpackOption unpackInt,
                                           unpackOption unpackString
                                       )) cin'
+                               val cfg = { thy_qualifier = #thy_qualifier (!cfg),
+                                           file = #file (!cfg),
+                                           position_label = #position_label (!cfg),
+                                           additional_libs = #additional_libs (!cfg),
+                                           import_dir = Option.map Path.explode import_dir }
                                val timeout = Option.map Time.fromMilliseconds timeout
                                val ret = case timeout
-                                           of NONE   => REPL.RE (!cfg) src
-                                            | SOME t => Timeout.apply t (REPL.RE (!cfg)) src
+                                           of NONE   => REPL.RE cfg src
+                                            | SOME t => let
+                                                val (elapsed, ret) = Timing.timing (Timeout.apply t (REPL.RE cfg)) src
+                                                val ret' = if is_some (#error ret) andalso
+                                                              String.isPrefix "Some error happens" (the (#error ret)) andalso
+                                                              t <= #cpu elapsed
+                                                           then raise Timeout.TIMEOUT (#cpu elapsed)
+                                                           else ret
+                                                           
+                                                 in ret
+                                                end
                              in doPack REPL_Serialize.command_outputs_packer ret cout
                               ; cin''
                            end
