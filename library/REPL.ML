@@ -13,7 +13,7 @@ type collector = cfg
               -> {current_command: Command_Span.span,
                   state: Toplevel.state, (*the state after executing the current command*)
                   remaining: (Toplevel.transition * Command_Span.span) list
-                                         (*the remaining code within the same theory file*)}
+                                         (*the remaining commands within the same theory file*)}
               -> MessagePackBinIO.Pack.raw_packer option *
                  Toplevel.state option
 type plugin_name = string
