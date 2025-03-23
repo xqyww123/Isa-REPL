@@ -121,7 +121,7 @@ class Client:
     A client for connecting Isabelle REPL
     """
 
-    VERSION = '0.9.4'
+    VERSION = '0.9.5'
 
     def __init__(self, addr, thy_qualifier):
         """

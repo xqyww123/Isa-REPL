@@ -5,11 +5,11 @@ type address = string (*IP address:port*)
 val startup : Path.T -> theory option -> address -> Isabelle_Thread.T
 val kill_server : address -> unit
 
-type App = (BinIO.StreamIO.instream * BinIO.StreamIO.outstream) -> BinIO.StreamIO.instream
+type App = (BinIO.StreamIO.instream Unsynchronized.ref * BinIO.StreamIO.outstream) -> unit
 val register_app : string -> App -> unit
 val app_of : string -> App option
 
-val socket_in_of  : unit -> BinIO.StreamIO.instream
+val socket_in_of  : unit -> BinIO.StreamIO.instream Unsynchronized.ref
 val socket_out_of : unit -> BinIO.StreamIO.outstream
 
 val output_err : BinIO.StreamIO.outstream -> string -> unit
@@ -28,7 +28,7 @@ structure REPL_Server : REPL_SEVER = struct
 
 (* App *)
 
-type App = (BinIO.StreamIO.instream * BinIO.StreamIO.outstream) -> BinIO.StreamIO.instream
+type App = (BinIO.StreamIO.instream Unsynchronized.ref * BinIO.StreamIO.outstream) -> unit
 val apps = Thread_Data.var () : App Symtab.table Unsynchronized.ref Thread_Data.var
 
 fun app_of name =
@@ -201,10 +201,10 @@ fun startup base_dir_of_theories thy0 addr0 =
 
           val (version, cin) = MessagePackBinIO.Unpack.doUnpack
                                           (MessagePackBinIO.Unpack.unpackString) cin
-          val _ = if version = "0.9.4" then ()
+          val _ = if version = "0.9.5" then ()
                   else (
                     output_err cout "The server is connected with a wrong version of the client.\n\
-                             \Please run `pip install \"IsaREPL==0.9.4\" --force-reinstall` to update your client."
+                             \Please run `pip install \"IsaREPL==0.9.5\" --force-reinstall` to update your client."
                   ; BinIO.StreamIO.flushOut cout
                   ; Socket.close conn
                   ; raise BAD_CONN)
@@ -213,6 +213,13 @@ fun startup base_dir_of_theories thy0 addr0 =
 
           val (thy_qualifier, cin) = MessagePackBinIO.Unpack.doUnpack
                                           (MessagePackBinIO.Unpack.unpackString) cin
+          val cin = Unsynchronized.ref cin
+          fun read unpacker = let open MessagePackBinIO.Unpack
+                                  val (ret, cin') = doUnpack unpacker (!cin)
+                                  val _ = cin := cin'
+                               in ret
+                              end
+
           val thy_qualifier = if thy_qualifier = ""
                               then if default_session = "Main"
                                    then "HOL"
@@ -224,162 +231,141 @@ fun startup base_dir_of_theories thy0 addr0 =
                                          additional_libs = [],
                                          import_dir = NONE }
 
-          fun loop cin =
-            if BinIO.StreamIO.endOfStream cin
+          fun loop () =
+            if BinIO.StreamIO.endOfStream (!cin)
             then ()
             else let open MessagePackBinIO.Unpack
-                val (source, cin') = doUnpack unpackString cin
-                val cin' = let open MessagePackBinIO.Pack in \<^try>\<open> (
+                val source = read unpackString
+                val () = let open MessagePackBinIO.Pack in \<^try>\<open> (
                   if String.isPrefix "\005" source
                   then let
                     in case source
                     of "\005trace" => (
                           REPL.set_trace true;
-                          output cout packUnit ();
-                          cin')
+                          output cout packUnit () )
                      | "\005notrace" => (
                           REPL.set_trace false;
-                          output cout packUnit ();
-                          cin')
+                          output cout packUnit () )
                      | "\005register_thy" => (
                           REPL.set_register_thy true;
-                          output cout packUnit ();
-                          cin')
+                          output cout packUnit () )
                      | "\005no_register_thy" => (
                           REPL.set_register_thy false;
-                          output cout packUnit ();
-                          cin')
+                          output cout packUnit () )
                      | "\005lex" => let
-                               val (src, cin'') = doUnpack unpackString cin'
+                               val src = read unpackString
                                val rets = REPL.lex_commands (!cfg) src
-                               val _ = output cout (packList (packPair (pos_packer, packString))) rets
-                            in cin''
+                            in output cout (packList (packPair (pos_packer, packString))) rets
                            end
                      | "\005lex'" => let
-                               val (src, cin'') = doUnpack unpackString cin'
+                               val src = read unpackString
                                val rets = REPL.fast_lex src
-                               val _ = output cout (packList (packPair (pos_packer, packString))) rets
-                            in cin''
+                            in output cout (packList (packPair (pos_packer, packString))) rets
                            end
                      | "\005plugin" => let
-                               val (thy, cin'') = doUnpack unpackString cin'
-                               val (name, cin'') = doUnpack unpackString cin''
-                               val (src, cin'') = doUnpack unpackString cin''
+                               val thy = read unpackString
+                               val name = read unpackString
+                               val src = read unpackString
                                val [thy] = REPL.thy_loader NONE "HOL" [thy]
                                val plugin = (name, compile_plugin (Context.Theory thy) src)
-                               val _ = REPL.register_plugin plugin
-                               val _ = output cout packUnit ()
-                            in cin''
+                            in REPL.register_plugin plugin
+                             ; output cout packUnit ()
                            end
                      | "\005unplugin" => let
-                               val (name, cin'') = doUnpack unpackString cin'
-                               val _ = REPL.delete_plugin name
-                               val _ = output cout packUnit ()
-                            in cin''
+                               val name = read unpackString
+                            in REPL.delete_plugin name
+                             ; output cout packUnit ()
                            end
                      | "\005record" => let
-                               val (name, cin'') = doUnpack unpackString cin'
-                               val _ = REPL.record_state name
-                               val _ = output cout packUnit ()
-                            in cin''
+                               val name = read unpackString
+                            in REPL.record_state name
+                             ; output cout packUnit ()
                            end
                      | "\005clean_history" => let
-                               val _ = REPL.clean_state ()
-                               val _ = output cout packUnit ()
-                            in cin'
+                            in REPL.clean_state ()
+                             ; output cout packUnit ()
                            end
                      | "\005rollback" => let
-                               val (name, cin'') = doUnpack unpackString cin'
+                               val name = read unpackString
                                val ret = REPL.rollback_state (!cfg) name
-                               val _ = output cout REPL_Serialize.command_output_packer ret
-                            in cin''
+                            in output cout REPL_Serialize.command_output_packer ret
                            end
                      | "\005history" => let
                                val his = REPL.list_states' (!cfg) ()
-                               val _ = output cout (packPairList (packString, REPL_Serialize.command_output_packer)) his
-                            in cin'
+                            in output cout (packPairList (packString, REPL_Serialize.command_output_packer)) his
                            end
                      | "\005sexpr_term" => let
-                               val (str, cin'') = doUnpack unpackString cin'
+                               val str = read unpackString
                                val (_, term) = REPL.parse_term str
-                               val _ = output cout REPL_Serialize.s_expression_packer term
-                            in cin''
+                            in output cout REPL_Serialize.s_expression_packer term
                            end
                      | "\005fact" => let
-                               val (str, cin'') = doUnpack unpackString cin'
+                               val str = read unpackString
                                val (ctxt, thms) = REPL.retrieve_fact str
-                               val _ = output cout (packList packString)
-                                          (map (REPL.trim_makrup o Syntax.string_of_term ctxt o Thm.prop_of) thms)
-                            in cin''
+                            in output cout (packList packString)
+                                           (map (REPL.trim_makrup o Syntax.string_of_term ctxt o Thm.prop_of) thms)
                            end
                      | "\005sexpr_fact" => let
-                               val (str, cin'') = doUnpack unpackString cin'
+                               val str = read unpackString
                                val (_, thms) = REPL.retrieve_fact str
-                               val _ = output cout (packList packString)
-                                          (map (REPL_Serialize.s_expression o Thm.prop_of) thms)
-                            in cin''
+                            in output cout (packList packString)
+                                           (map (REPL_Serialize.s_expression o Thm.prop_of) thms)
                            end
                      | "\005hammer" => let
-                               val (timeout, cin'') = doUnpack unpackInt cin'
+                               val timeout = read unpackInt
                                val proof = REPL.sledgehammer timeout
-                               val _ = output cout packString proof
-                            in cin''
+                            in output cout packString proof
                            end
                      | "\005context" => let
-                               val (s_expr, cin'') = doUnpack unpackBool cin'
+                               val s_expr = read unpackBool
                                val ctxt = REPL.get_ctxt ()
                                val state = REPL.get_context ()
-                               val _ = output cout (REPL_Serialize.pack_context s_expr (Context.Proof ctxt)) state
-                            in cin''
+                            in output cout (REPL_Serialize.pack_context s_expr (Context.Proof ctxt)) state
                            end
                      | "\005qualifier" => let
-                               val (qualifier, cin'') = doUnpack unpackString cin'
+                               val qualifier = read unpackString
                                (*val {base_dir, ...} = !cfg *)
                                val _ = cfg := { thy_qualifier=qualifier,
                                                 file = #file (!cfg),
                                                 position_label = #position_label (!cfg),
                                                 additional_libs = #additional_libs (!cfg),
                                                 import_dir = #import_dir (!cfg) }
-                               val _ = output cout packUnit ()
-                            in cin''
+                            in output cout packUnit ()
                            end
                      | "\005session-of" => let
-                               val (path, cin'') = doUnpack unpackString cin'
+                               val path = read unpackString
                                val session = REPL_Aux.parse_session_name (Path.explode path)
-                               val _ = output cout (packOption packString) session
-                            in cin''
+                            in output cout (packOption packString) session
                            end
                      | "\005app" => let
-                               val (name, cin'') = doUnpack unpackString cin'
+                               val name = read unpackString
                             in case app_of name
-                            of NONE => (output cout packBool false; cin'')
+                            of NONE => output cout packBool false
                              | SOME app => (
                                   output cout packBool true
                                 ; BinIO.StreamIO.flushOut cout
-                                ; app (cin'', cout))
+                                ; app (cin, cout))
                            end
                      | "\005ML" => let
-                               val ((thy,src), cin'') = doUnpack (unpackPair (unpackString,unpackString)) cin'
+                               val (thy,src) = read (unpackPair (unpackString,unpackString))
                                val [thy] = REPL.thy_loader NONE "HOL" [thy]
                             in run_ML (Context.Theory thy) src
                              ; output cout packBool true
-                             ; cin''
                            end
                      | "\005load" => let
-                               val ((thy_qualifier, targets), cin'') =
-                                    doUnpack (unpackPair (unpackString, unpackList unpackString)) cin'
+                               val (thy_qualifier, targets) =
+                                    read (unpackPair (unpackString, unpackList unpackString))
                                val thys = REPL.thy_loader NONE thy_qualifier targets
                             in output cout (packList packString) (map Context.theory_long_name thys)
-                             ; cin''
                            end
                      | "\005file" => let
-                               val ((raw_path, pos, timeout), cin'') =
-                                      doUnpack (unpackTuple3 (
+                               val (raw_path, pos, timeout) =
+                                      read (unpackTuple3 (
                                           unpackString,
                                           unpackOption (
                                             unpackPair (unpackInt, unpackInt)),
                                           unpackOption unpackInt
-                                      )) cin'
+                                      ))
                                val path = Path.explode raw_path
                                val session = REPL_Aux.parse_session_name path
                                val cfg = { thy_qualifier =
@@ -405,15 +391,14 @@ fun startup base_dir_of_theories thy0 addr0 =
                                            of NONE   => REPL.RE cfg src
                                             | SOME t => Timeout.apply t (REPL.RE cfg) src
                             in doPack REPL_Serialize.command_outputs_packer ret cout
-                             ; cin''
                            end
                      | "\005eval" => let
-                               val ((src, timeout, import_dir), cin'') =
-                                      doUnpack (unpackTuple3 (
+                               val (src, timeout, import_dir) =
+                                      read (unpackTuple3 (
                                           unpackString,
                                           unpackOption unpackInt,
                                           unpackOption unpackString
-                                      )) cin'
+                                      ))
                                val cfg = { thy_qualifier = #thy_qualifier (!cfg),
                                            file = #file (!cfg),
                                            position_label = #position_label (!cfg),
@@ -433,44 +418,38 @@ fun startup base_dir_of_theories thy0 addr0 =
                                                  in ret
                                                 end
                              in doPack REPL_Serialize.command_outputs_packer ret cout
-                              ; cin''
                            end
                      | "\005addlibs" => let
-                               val (libs, cin'') = doUnpack (unpackList unpackString) cin'
+                               val libs = read (unpackList unpackString)
                             in cfg := { thy_qualifier = #thy_qualifier (!cfg),
                                         file = #file (!cfg),
                                         position_label = #position_label (!cfg),
                                         additional_libs = merge (op =) (#additional_libs (!cfg), libs),
                                         import_dir = #import_dir (!cfg) }
                              ; output cout packUnit ()
-                             ; cin''
                            end
                      | "\005numcpu" => let
                                val num = Multithreading.max_threads ()
                             in output cout packInt num
-                             ; cin'
                            end
-                    end handle REPL.REPL_fail E => (
+                    end handle REPL.REPL_fail E =>
                            output_err cout E
-                         ; cin')
                   else let
                     val ret = REPL.RE (!cfg) source
                      in doPack REPL_Serialize.command_outputs_packer ret cout
-                      ; cin'
                     end )
-                  catch E => (
-                        output_err cout (Runtime.exn_message E)
-                      ; cin') \<close>
+                  catch E =>
+                        output_err cout (Runtime.exn_message E) \<close>
                   end
                 val _ = BinIO.StreamIO.flushOut cout
-             in loop cin'
+             in loop ()
             end
        in Isabelle_Thread.fork (  Isabelle_Thread.params "REPL-worker"
                                 |> Isabelle_Thread.interrupts )
                                (fn () => (
                 REPL.init_repler base_dir_of_theories thy0
               ; Thread_Data.put sockets (SOME (cin, cout))
-              ; loop cin
+              ; loop ()
            ))
          ; ()
       end
