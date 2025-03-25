@@ -123,7 +123,7 @@ class Client:
 
     VERSION = '0.9.5'
 
-    def __init__(self, addr, thy_qualifier):
+    def __init__(self, addr, thy_qualifier, timeout=3600):
         """
         Create a client and connect it to `addr`.
 
@@ -158,9 +158,8 @@ class Client:
             host, port = address.split(':')
             return (host, int(port))
 
-        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         host, port = parse_address(addr)
-        self.sock.connect((host, port))
+        self.sock = socket.create_connection((host, port), timeout=timeout)
         self.cout = self.sock.makefile('wb')
         self.cin = self.sock.makefile('rb', buffering=0)
         self.unpack = mp.Unpacker(self.cin)
