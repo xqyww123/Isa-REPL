@@ -732,7 +732,7 @@ fun sledgehammer timeout' =
                        else Config.map Phi_Sledgehammer_Solver.sledgehammer_params
                                  (fn s => "timeout = " ^ string_of_int timeout' ^ ", " ^ s))
            val goal = Proof.goal stat |> #goal
-           val (prf, _) = Phi_Sledgehammer_Solver.auto Sledgehammer_Fact.no_fact_override NONE ctxt goal
+           val (prf, _) = Phi_Sledgehammer_Solver.auto true Sledgehammer_Fact.no_fact_override NONE ctxt goal
         in prf
        end) ()
        end
