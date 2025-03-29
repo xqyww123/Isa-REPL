@@ -6,7 +6,7 @@ val parse_session_name : Path.T -> string option
 val collect_thy_dirs : Path.T list -> Path.T list
 val session_theory_infos :
       ( {deps: string list, theories: string list} Symtab.table
-      * {imports: string list, keywords: Thy_Header.keywords, path: Path.T} Symtab.table
+      * (Thy_Header.header * Path.T) Symtab.table
       ) lazy
 
 val parse_thy_header : Path.T -> Thy_Header.header list
@@ -66,16 +66,13 @@ val session_parser =
       Scan.repeat document_files --
       Scan.repeat export_files --
       Scan.optional export_classpath []))
-  >> (fn (((((session, _), _), dir), ((((((((((parent, _), _), sessions), dirs), theories), _), _), _), _)))) =>
+  >> (fn (((((session, _), _), dir), ((((((((((parent, _), _), sessions), _), theories), _), _), _), _)))) =>
     let val dir = Path.explode (Input.string_of dir)
-        val dirs= map (Path.explode o Input.string_of) dirs
         fun parse_thy path = Path.expand (dir + Path.explode (Input.string_of path))
         val deps = map fst (the_list parent @ sessions)
      in (session,
          map (map parse_thy o snd) theories |> flat,
-         deps,
-         dir,
-         dirs)
+         deps)
     end )
 
 val ROOT = Path.explode("ROOT")
@@ -109,63 +106,32 @@ fun find_session input =
 
 end
 
-fun parse_session_name target_path =
-  let val target_path = Path.expand target_path
-      val (target, _) = Path.split_ext target_path
-      val short_name = Path.file_name target
-      fun find base =
+fun parse_session_name path =
+  let val path = Path.expand path
+      val (target, _) = Path.split_ext path
+      fun find top dir =
         case try ( File.read
                 #> Input.string
                 #> find_session            
                 #> map fst
-                 ) (base + ROOT)
+                 ) (dir + ROOT)
           of SOME sessions => sessions
-              |> get_first (fn (session, thys, _, _, _) =>
-                    if exists (fn thy => base + thy = target) thys
+              |> get_first (fn (session, thys, _) =>
+                    if exists (fn thy => dir + thy = target) thys
                     then SOME session
                     else NONE)
-              |> (fn NONE => 
-                  let fun best_dir pathss current =
-                        let val pathss = map (apfst (map Path.expand)) pathss
-                            fun chk current =
-                              case get_first (fn (xs, session) =>
-                                    get_first (fn x =>
-                                      if x = current andalso
-                                        (case Resources.find_theory_file (Long_Name.qualify session short_name)
-                                           of SOME target_path' => target_path = target_path'
-                                            | NONE => false)
-                                      then SOME session
-                                      else NONE
-                                      ) xs
-                                   ) pathss
-                                of SOME ret => SOME ret
-                                 | NONE => (case try Path.dir current
-                                of SOME current' => chk current'
-                                 | NONE => NONE)
-                         in chk (Path.expand current)
-                        end
-                      val paths = map (fn (session, _, _, major_dir,dirs) =>
-                                        (    (base + major_dir)
-                                          :: map (fn dir => base + major_dir + dir) dirs,
-                                         session)) sessions
-                   in case best_dir paths target_path
-                        of NONE => (case try Path.dir base
-                                      of SOME base' => find base'
-                                       | NONE => NONE )
-                         | some => some
-(* try Path.dir dir
+              |> (fn NONE => try Path.dir dir
                           |> Option.mapPartial (fn dir' =>
                                 case find false dir'
                                   of NONE => if top andalso (case sessions of [_] => true | _ => false)
                                              then SOME (#1 (hd sessions))
                                              else NONE
-                                   | some => some) *)
-                  end
+                                   | some => some)
                    | some => some)
-           | _ => try Path.dir base
-               |> Option.mapPartial find
-   in try Path.dir target_path
-   |> Option.mapPartial find
+           | _ => try Path.dir dir
+               |> Option.mapPartial (find top)
+   in try Path.dir target
+   |> Option.mapPartial (find true)
   end
 
 fun is_comment s =
@@ -182,8 +148,8 @@ fun is_comment s =
     ; !ret
   end
 
-fun collect_thy_dirs0 ret [] = ret
-  | collect_thy_dirs0 ret paths =
+fun collect_thy_dirs0 [] = []
+  | collect_thy_dirs0 paths =
       let val new_dirs = maps (fn path =>
                   let val roots = Path.append path (Path.basic "ROOTS")
                    in if File.is_file roots
@@ -194,10 +160,10 @@ fun collect_thy_dirs0 ret [] = ret
                   end
                 ) paths
               |> distinct (op =)
-              |> subtract (op =) ret
-       in collect_thy_dirs0 (new_dirs @ ret) new_dirs
+              |> subtract (op =) paths
+       in new_dirs @ collect_thy_dirs0 new_dirs
       end
-fun collect_thy_dirs paths = collect_thy_dirs0 paths paths
+fun collect_thy_dirs paths = paths @ collect_thy_dirs0 paths
 
 fun parse_thy_header path =
   let val pos = Position.make {
@@ -221,40 +187,6 @@ fun has_slash s =
     ; !ret
   end
 
-fun qualify_name sname name =
-       if Long_Name.is_qualified name
-       then name
-       else Long_Name.qualify sname name
-
-fun parse_import dir sname name =
-      if is_some (Resources.global_theory name)
-      then SOME name
-      else if has_slash name
-      then let
-           val path' = Path.explode name
-        in case parse_session_name (dir + Path.ext "thy" path')
-             of NONE => (warning (Path.implode (dir + Path.ext "thy" path')); NONE)
-              | SOME session => SOME (qualify_name session (Path.file_name path'))
-       end
-      else SOME (qualify_name sname name)
-
-fun collect_theory sname0 thy_name (tinfo, thys) =
-      (case Resources.find_theory_file thy_name
-         of NONE => error "BUG Resources.find_theory_file"
-          | SOME path =>
-              let val sname' = Resources.theory_qualifier thy_name
-                  val {imports,keywords,...} = Resources.check_thy (Path.dir path) thy_name
-                  val dir = Path.dir path
-                  val imports = map_filter (parse_import dir sname' o fst) imports
-                  val recursive_targets = imports
-                          |> filter (fn name => not (Symtab.defined tinfo name) )
-                  val info = {imports=imports, keywords=keywords, path=path}
-               in (Symtab.update (thy_name, info) tinfo,
-                   if sname' = sname0 then insert (op =) thy_name thys
-                                      else thys)
-               |> fold (collect_theory sname0) recursive_targets
-              end )
-
 fun mk_session_info paths (*Isabelle components*) =
   let val dirs = collect_thy_dirs paths
    in fold (fn path0 =>
@@ -265,10 +197,31 @@ fun mk_session_info paths (*Isabelle components*) =
                          |> Input.string
                          |> find_session
                          |> map fst
-          in fold (fn (sname, raw_thys, deps, _, _) => fn (sinfo, tinfo) =>
-            let 
-                val thy_names = map_filter (parse_import path0 sname o Path.implode) raw_thys
-                val (tinfo', thys') = fold (collect_theory sname) thy_names (tinfo, [])
+          in fold (fn (sname, thys, deps) => fn (sinfo, tinfo) =>
+            let val headerss = map_filter (fn thy =>
+                        try (` parse_thy_header) (path0 + Path.ext "thy" thy)) thys
+                val (tinfo', thys') = fold (fn (headers,path) =>
+                      fold (fn header => fn (tinfo, thys) =>
+                        let fun qualify_name name =
+                                   if Long_Name.is_qualified name
+                                   then name
+                                   else Long_Name.qualify sname name
+                            fun parse_import name =
+                                  if has_slash name
+                                  then parse_thy_header (path0 + Path.ext "thy" (Path.explode name))
+                                    |> hd
+                                    |> #name
+                                    |> fst
+                                    |> qualify_name
+                                  else qualify_name name
+                            val header = { name = #name header,
+                                           imports = map_filter (try (apfst parse_import)) (#imports header),
+                                           keywords = #keywords header }
+                            val name = qualify_name (fst (#name header))
+                         in (Symtab.update (name, (header, path)) tinfo,
+                             insert (op =) name thys)
+                        end ) headers
+                    ) headerss (tinfo, [])
              in (Symtab.update_new (sname, {deps=deps, theories=thys'}) sinfo,
                  tinfo')
             end
