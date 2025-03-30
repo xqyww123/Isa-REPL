@@ -56,6 +56,7 @@ val thy_loader : Path.T option -> string -> string list -> theory list
 
 (* Plugin *)
 
+val check_plugin : plugin_name -> collector option
 val register_plugin : plugin -> unit
 val delete_plugin : plugin_name -> unit
 
@@ -617,6 +618,12 @@ fun fast_lex source =
   end
 
 (** Plugin II **)
+
+fun check_plugin name =
+  case Thread_Data.get Session_ID
+    of NONE               => raise REPL_fail "INTERNAL ERROR: worker ID lost"
+     | SOME (_, _, plugins) =>
+        AList.lookup (op =) plugins name
 
 fun register_plugin plugin =
   case Thread_Data.get Session_ID

@@ -63,43 +63,49 @@ for file in [f"{isabelle_home}/etc/symbols", f"{isabelle_home_user}/etc/symbols"
     SYMBOLS, REVERSE_SYMBOLS = _load_symbols(file, SYMBOLS, REVERSE_SYMBOLS)
 
 class Position:
-    def __init__(self, line, column, end_column, file):
+    def __init__(self, line, column, file):
         self.line = line
         self.column = column
-        self.end_column = end_column
         self.file = file
 
     def __str__(self):
-        return f"{self.file}:{self.line}:{self.column}:{self.end_column}"
+        return f"{self.file}:{self.line}:{self.column}"
 
     def __repr__(self):
-        return f"{self.file}:{self.line}:{self.column}:{self.end_column}"
+        return f"{self.file}:{self.line}:{self.column}"
 
     def __eq__(self, other):
         if not isinstance(other, Position):
             return False
         return (self.line == other.line and 
                 self.column == other.column and 
-                self.end_column == other.end_column and 
                 self.file == other.file)
     
     def __hash__(self):
-        return hash((self.line, self.column, self.end_column, self.file))
+        return hash((self.line, self.column, self.file))
 
     @staticmethod
     def from_s(position_str):
         parts = position_str.split(':')
-        if len(parts) != 4:
-            raise ValueError("The string must be in the format: file:line:column:end_column")
-        file, line, column, end_column = parts
-        return Position(int(line), int(column), int(end_column), file)
+        match parts:
+            case [file, line, column, _]:
+                return Position(int(line), int(column), file)
+            case [file, line, column]:
+                return Position(int(line), int(column), file)
+            case [file, line]:
+                return Position(int(line), 0, file)
+            case [file]:
+                return Position(0, 0, file)
+            case _:
+                raise ValueError("The string must be in the format: file:line:column")
 
-def unpack_position(data):  
-    line, column, end_column, tup3 = data
+def __unpack_position__(data):  
+    line, offset, end_offset, tup3 = data
     label, file, id = tup3
-    return Position(line, column, end_column, file)
+    return Position(line, offset, file)
 
-def repair_positions(data):
+# There is a BUG! the position must be convretd from ML part.
+def __repair_positions__(data):
     i = 0
     for pos, src in data:
         pos.column = i
@@ -265,8 +271,8 @@ class Client:
         mp.pack(source, self.cout)
         self.cout.flush()
         ret = Client._parse_control_(self.unpack.unpack())
-        ret = [(unpack_position(pos), src) for pos, src in ret]
-        repair_positions(ret)
+        ret = [(__unpack_position__(pos), src) for pos, src in ret]
+        __repair_positions__(ret)
         return ret
 
     def fast_lex(self, source):
@@ -283,8 +289,8 @@ class Client:
         mp.pack(source, self.cout)
         self.cout.flush()
         ret = Client._parse_control_(self.unpack.unpack())
-        ret = [(unpack_position(pos), src) for pos, src in ret]
-        repair_positions(ret)
+        ret = [(__unpack_position__(pos), src) for pos, src in ret]
+        __repair_positions__(ret)
         return ret
 
     def plugin(self, name, ML, thy='Isa_REPL.Isa_REPL'):
