@@ -488,7 +488,7 @@ class Client:
         mp.pack ("\x05sexpr_term", self.cout)
         mp.pack (term, self.cout)
         self.cout.flush()
-        return Client.__parse_control__ (self.unpack.unpack())
+        return Client._parse_control_ (self.unpack.unpack())
 
     def fact (self, names):
         """
@@ -503,7 +503,7 @@ class Client:
         mp.pack ("\x05fact", self.cout)
         mp.pack (names, self.cout)
         self.cout.flush()
-        return Client.__parse_control__ (self.unpack.unpack())
+        return Client._parse_control_ (self.unpack.unpack())
 
     def sexpr_fact (self, names):
         """
@@ -514,7 +514,7 @@ class Client:
         mp.pack ("\x05sexpr_fact", self.cout)
         mp.pack (names, self.cout)
         self.cout.flush()
-        return Client.__parse_control__ (self.unpack.unpack())
+        return Client._parse_control_ (self.unpack.unpack())
 
     def hammer (self, timeout):
         """
@@ -690,10 +690,14 @@ class Client:
         self.cout.flush()
         return Client._parse_control_(self.unpack.unpack())
 
-    def eval_file(self, path, line=~1, column=0, timeout=None):
+    def file(self, path : str, line : int = ~1, column : int = 0, timeout : int | None = None,
+            cache_position : bool = False, use_cache : bool = False):
         """
         Evaluate the file at the given path.
-        This method has the same return as the `eval` method.
+        This method only returns erros encountered during the evaluation.
+        The evaluation may continue from a previously cached position if `use_cache` is True.
+        The state at the position can be cached to be reused by later `file` calls if `cache_position` is True.
+
         Argument line and column indicate the REPL to evaluate all code
         until the first `column` characters at the `line`, meaning the REPL
         will stop at the position `line:column`.
@@ -706,11 +710,17 @@ class Client:
             raise ValueError("the argument `line` must be an int")
         if not isinstance(column, int):
             raise ValueError("the argument `column` must be an int")
+        if not isinstance(timeout, int | None):
+            raise ValueError("the argument `timeout` must be an int or None")
+        if not isinstance(cache_position, bool):
+            raise ValueError("the argument `cache_position` must be a bool")
+        if not isinstance(use_cache, bool):
+            raise ValueError("the argument `use_cache` must be a bool")
         pos = None
         if line >= 0:
             pos = (line, column)
         mp.pack("\x05file", self.cout)
-        mp.pack((path, pos, timeout), self.cout)
+        mp.pack((path, pos, timeout, cache_position, use_cache), self.cout)
         self.cout.flush()
         return Client._parse_control_(self.unpack.unpack())
 

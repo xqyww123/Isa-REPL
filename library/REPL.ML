@@ -40,6 +40,8 @@ type command_outputs = {
         error : string option
 }
 
+val collect_erros : command_outputs -> string list -> string list
+
 exception REPL_fail of string
 
 type Session_ID = int
@@ -71,9 +73,13 @@ val get_and_clean_message  : unit -> message list
 
 type state_history = (string * Toplevel.state) list
 val record_state : string -> unit
+val record_state_global : string -> Toplevel.state Symtab.table Synchronized.var -> unit
 val remove_state : string -> unit
 val clean_state : unit -> unit
 val rollback_state : cfg -> string -> command_output
+val rollback_state_global : cfg -> string ->
+        Toplevel.state Symtab.table Synchronized.var ->
+          command_output
 val list_states  : unit -> state_history
 val list_states' : cfg -> unit -> (string (*name*) * command_output) list
 
@@ -177,6 +183,9 @@ type command_outputs = {
         outputs: command_output list option,
         error : string option
 }
+
+fun collect_erros {outputs, error} ret =
+      maps #errors (these outputs) @ the_list error @ ret
 
 
 (** Plugin **)
@@ -422,7 +431,7 @@ val split_thy_headers = lex_split false false pure_keywords Token.is_command_mod
 fun parse_text cfg register_theory' state source =
   let val thy = get_thy cfg state source
    in if register_theory' andalso not (pointer_eq (Pure, thy))
-         andalso Resources.master_directory thy = fst cfg
+         andalso Path.expand (Resources.master_directory thy) = Path.expand (fst cfg)
     then File.append (Path.append (Resources.master_directory thy)
                                   (Path.explode (Context.theory_name {long=false} thy ^ ".thy")))
                      (Symbol_Pos.content source)
@@ -645,6 +654,12 @@ fun record_state name =
      | SOME (s,cnt,t,H) =>
      Thread_Data.put state (SOME (s, cnt, t, AList.update (op =) (name,s) H))
 
+fun record_state_global name store =
+  case Thread_Data.get state
+    of NONE             => raise REPL_fail  "INTERNAL ERROR: state lost"
+     | SOME (s,_,_,_) =>
+     Synchronized.change store (Symtab.update (name, s))
+
 fun remove_state name =
   case Thread_Data.get state
     of NONE             => raise REPL_fail  "INTERNAL ERROR: state lost"
@@ -665,9 +680,9 @@ fun rollback_state cfg name =
   case Thread_Data.get state
     of NONE             => raise REPL_fail  "INTERNAL ERROR: state lost"
      | SOME (_,cnt,t,H) =>
-     case AList.lookup (op =) H name
-       of NONE => raise REPL_fail ("Historical state " ^ name ^ " is not found.")
-        | SOME s' => let
+  case AList.lookup (op =) H name
+    of NONE => raise REPL_fail ("Historical state " ^ name ^ " is not found.")
+     | SOME s' => let
        val (plugin_output, s'') =
             run_plugins cfg plugins (Command_Span.Span
                                         (Command_Span.Command_Span ("<rollback>", Position.none), []),
@@ -675,7 +690,28 @@ fun rollback_state cfg name =
                                      s')
     in Thread_Data.put state (SOME (s'', cnt, t, H))
      ; catch_state' wid plugin_output [] "" s'
-   end 
+   end
+
+fun rollback_state_global cfg name store =
+  case Thread_Data.get Session_ID
+    of NONE                => raise REPL_fail  "INTERNAL ERROR: state lost"
+     | SOME (wid, _, plugins) =>
+  case Thread_Data.get state
+    of NONE             => raise REPL_fail  "INTERNAL ERROR: state lost"
+     | SOME (_,cnt,t,H) =>
+  case Symtab.lookup (Synchronized.value store) name
+    |> (fn NONE => AList.lookup (op =) H name
+         | some => some)
+    of NONE => raise REPL_fail ("Historical state " ^ name ^ " is not found.")
+     | SOME s' => let
+       val (plugin_output, s'') =
+            run_plugins cfg plugins (Command_Span.Span
+                                        (Command_Span.Command_Span ("<rollback>", Position.none), []),
+                                     [],
+                                     s')
+    in Thread_Data.put state (SOME (s'', cnt, t, H))
+     ; catch_state' wid plugin_output [] "" s'
+   end
 
 fun list_states () =
   case Thread_Data.get state

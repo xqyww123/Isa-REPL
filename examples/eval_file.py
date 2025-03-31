@@ -7,7 +7,7 @@ Evaluate an entire theory file.
 
 Example
 
-./examples/eval_file.py 127.0.0.1:6666 $(isabelle getenv -b ISABELLE_HOME)/src/HOL/List.thy
+./examples/eval_file.py 127.0.0.1:6666 $(isabelle getenv -b ISABELLE_HOME)/src/HOL/List.thy:8407:2
 
 """
 
@@ -19,7 +19,9 @@ if len(sys.argv) != 3:
     exit(1)
 
 addr   = sys.argv[1]
-target = sys.argv[2]
+target, line, column = sys.argv[2].split(':')
+line=int(line)
+column=int(column)
 
 c = Client(addr, 'HOL')
 c.set_register_thy (False) # preventing the REPL to reigster he evaluated theories
@@ -33,8 +35,8 @@ c.set_register_thy (False) # preventing the REPL to reigster he evaluated theori
 def is_empty(obj):
     return obj == [] or obj == ""
 
-ret = c.eval_file (target)
-print ('result:')
+ret = c.file (target, line=line, column=column, cache_position=True, use_cache=True)
+print ('errors encountered:')
 print(ret)
 
 print("success")

@@ -7,7 +7,7 @@ begin
 
 ML \<open>Path.explode "/tmp/repl_outputs"\<close>
 
-ML \<open>REPL_Server.startup (Path.explode "/tmp/repl_outputs") NONE "127.0.0.1:4477"\<close>
+ML \<open>REPL_Server.startup (Path.explode "/home/xero/Current/MLML/cache/repl_tmps/66") NONE "127.0.0.1:4481"\<close>
 
 term 1
 

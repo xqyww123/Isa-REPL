@@ -161,6 +161,20 @@ fun pos_packer pos =
       (line, offset, end_offset, (label, file, id))
   end
 
+
+fun column_to_offset src (line, column) =
+  let val ofs = Unsynchronized.ref 0
+      val ln = Unsynchronized.ref 1
+   in while !ln < line do
+        case String.sub(src, !ofs)
+          of #"\n" => (  ln := !ln + 1
+                      ; ofs := !ofs + 1 )
+           | _ => ofs := !ofs + 1
+    ; !ofs + Int.max (column - 1, 0)
+  end
+
+structure Postab = Table(type key = string * int val ord = prod_ord fast_string_ord int_ord);
+
 fun startup base_dir_of_theories thy0 addr0 =
   let val _ = if File.is_dir base_dir_of_theories
               then warning ("The base_dir_of_theories already exists. The shell may overwrite files.")
@@ -187,6 +201,11 @@ fun startup base_dir_of_theories thy0 addr0 =
       val _ = Socket.listen (socket, 16)
       val msg = "Hi, this is Isabelle REPL Server.\n\
         \I'm now listening on " ^ addr0 ^ ". I will never terminate untill you kill me!"
+
+
+      val evaluation_cache = Synchronized.var "evaluation_cache" Symtab.empty
+      val evaluation_cache_store = Synchronized.var "evaluation_cache_store" Symtab.empty
+      val evaluation_cache_counter = Counter.make ()
 
       exception BAD_CONN
    in writeln msg
@@ -358,12 +377,15 @@ fun startup base_dir_of_theories thy0 addr0 =
                         in output cout (packList packString) (map Context.theory_long_name thys)
                        end
                  | "\005file" => let
-                           val (raw_path, pos, timeout) =
-                                  read (unpackTuple3 (
+                           (*if use_cache, will find the nearest cached evaluation state to continue*)
+                           val (raw_path, pos, timeout, cache_the_position, use_cache) =
+                                  read (unpackTuple5 (
                                       unpackString,
                                       unpackOption (
                                         unpackPair (unpackInt, unpackInt)),
-                                      unpackOption unpackInt
+                                      unpackOption unpackInt,
+                                      unpackBool,
+                                      unpackBool
                                   ))
                            val path = Path.explode raw_path
                            val session = REPL_Aux.parse_session_name path
@@ -374,22 +396,52 @@ fun startup base_dir_of_theories thy0 addr0 =
                                        position_label = NONE,
                                        additional_libs = #additional_libs (!cfg),
                                        import_dir = SOME (Path.dir path) }
-                           val src = case pos
-                                       of NONE => File.read path
-                                        | SOME (l,n) => let
-                                               val lns = File.read_lines path
-                                               fun take 0 (s::_) = [String.substring (s, 0, n)]
-                                                 | take 0 [] = []
-                                                 | take n (s::L) = s :: take (n-1) L
-                                                 | take _ _ = raise General.Subscript
-                                            in take (l-1) lns
-                                            |> String.concatWith "\n"
-                                           end
+                           val file = Path.implode (Path.expand path)
+                           val (src, ofs) =
+                                    case pos
+                                      of NONE => (File.read path, NONE)
+                                       | SOME (l,c) =>
+                                            let val src = File.read path
+                                                val ofs = column_to_offset src (l,c)
+                                             in (String.substring (src, 0, ofs), SOME ofs)
+                                            end
+                           val (snapshot, to_eval) =
+                                case ofs
+                                  of NONE => ("init", src)
+                                   | SOME ofs =>
+                                      if use_cache
+                                      then case Symtab.lookup (Synchronized.value evaluation_cache) file
+                                        of NONE => ("init", src)
+                                         | SOME ofs_tab =>
+                                            let exception Break
+                                             in ( Inttab.fold (fn (k, v) => fn _ =>
+                                                      if k <= ofs then SOME (k, v) else raise Break
+                                                    ) ofs_tab NONE
+                                                handle Break => NONE)
+                                             |> (fn NONE => ("init", src)
+                                                  | SOME (k, v) =>
+                                                      (v, String.substring (src, k, size src - k)))
+                                            end
+                                      else ("init", src)
+                           val errs = #errors (REPL.rollback_state_global cfg snapshot evaluation_cache_store)
                            val timeout = Option.map Time.fromMilliseconds timeout
-                           val ret = case timeout
-                                       of NONE   => REPL.RE cfg src
-                                        | SOME t => Timeout.apply t (REPL.RE cfg) src
-                        in doPack REPL_Serialize.command_outputs_packer ret cout
+                           val errs = if to_eval = ""
+                                      then errs
+                                      else case timeout
+                                        of NONE   =>
+                                              REPL.collect_erros (REPL.RE cfg to_eval) errs
+                                         | SOME t =>
+                                              REPL.collect_erros (Timeout.apply t (REPL.RE cfg) to_eval) errs
+                        in if null errs andalso cache_the_position andalso is_some ofs
+                           then let
+                                val name = "_" ^ string_of_int (evaluation_cache_counter ())
+                             in REPL.record_state_global name evaluation_cache_store
+                              ; Synchronized.change evaluation_cache (
+                                  Symtab.map_default (file, Inttab.empty)
+                                    (Inttab.update (the ofs, name)))
+                            end
+                           else ()
+                         ; output cout (packList packString) errs
                        end
                  | "\005eval" => let
                            val (src, timeout, import_dir) =
@@ -453,6 +505,7 @@ fun startup base_dir_of_theories thy0 addr0 =
                                (fn () => (
                 REPL.init_repler base_dir_of_theories thy0
               ; Thread_Data.put sockets (SOME (cin, cout))
+              ; REPL.record_state "init"
               ; loop ()
            ))
          ; ()
