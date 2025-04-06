@@ -175,6 +175,18 @@ class Client:
         self.cout.flush()
         self.pid = Client._parse_control_(self.unpack.unpack())
 
+    @staticmethod
+    def test_server(addr, timeout=60):
+        host, port = addr.split(':')
+        with socket.create_connection((host, port), timeout=timeout) as sock:
+            with sock.makefile('wb') as cout:
+                with sock.makefile('rb', buffering=0) as cin:
+                    unpack = mp.Unpacker(cin)
+                    mp.pack("heartbeat", cout)
+                    cout.flush()
+                    Client._parse_control_(unpack.unpack())
+
+
     def __enter__(self):
         return self
     def __exit__(self, exc_type, exc_value, traceback):

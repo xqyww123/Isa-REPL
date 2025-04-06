@@ -207,7 +207,7 @@ fun startup base_dir_of_theories thy0 addr0 =
       val evaluation_cache_store = Synchronized.var "evaluation_cache_store" Symtab.empty
       val evaluation_cache_counter = Counter.make ()
 
-      exception BAD_CONN
+      exception CONTINUE
    in writeln msg
     ; Output.physical_stdout msg
     ; Output.physical_stderr msg
@@ -221,12 +221,19 @@ fun startup base_dir_of_theories thy0 addr0 =
           val (version, cin) = MessagePackBinIO.Unpack.doUnpack
                                           (MessagePackBinIO.Unpack.unpackString) cin
           val _ = if version = "0.9.5" then ()
+                  else if version = "heartbeat"
+                  then \<^try>\<open> (
+                       output cout MessagePackBinIO.Pack.packUnit ()
+                     ; BinIO.StreamIO.flushOut cout )
+                    finally (
+                       Socket.close conn
+                     ; raise CONTINUE ) \<close>
                   else (
                     output_err cout "The server is connected with a wrong version of the client.\n\
                              \Please run `pip install \"IsaREPL==0.9.5\" --force-reinstall` to update your client."
                   ; BinIO.StreamIO.flushOut cout
                   ; Socket.close conn
-                  ; raise BAD_CONN)
+                  ; raise CONTINUE)
           val _ = output cout MessagePackBinIO.Pack.packInt (Value.parse_int (getenv_strict "REPL_PID"))
           val _ = BinIO.StreamIO.flushOut cout
 
@@ -510,7 +517,7 @@ fun startup base_dir_of_theories thy0 addr0 =
            ))
          ; ()
       end
-      handle BAD_CONN => () )
+      handle CONTINUE => () )
       finally
         Synchronized.change servers (Symtab.delete addr0) \<close> ))
   end
