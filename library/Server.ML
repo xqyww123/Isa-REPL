@@ -226,13 +226,15 @@ fun startup base_dir_of_theories thy0 addr0 =
                        output cout MessagePackBinIO.Pack.packUnit ()
                      ; BinIO.StreamIO.flushOut cout )
                     finally (
-                       Socket.close conn
+                       BinIO.StreamIO.closeOut cout
+                     ; BinIO.StreamIO.closeIn  cin
                      ; raise CONTINUE ) \<close>
                   else (
                     output_err cout "The server is connected with a wrong version of the client.\n\
                              \Please run `pip install \"IsaREPL==0.9.5\" --force-reinstall` to update your client."
                   ; BinIO.StreamIO.flushOut cout
-                  ; Socket.close conn
+                  ; BinIO.StreamIO.closeOut cout
+                  ; BinIO.StreamIO.closeIn  cin
                   ; raise CONTINUE)
           val _ = output cout MessagePackBinIO.Pack.packInt (Value.parse_int (getenv_strict "REPL_PID"))
           val _ = BinIO.StreamIO.flushOut cout
@@ -509,12 +511,15 @@ fun startup base_dir_of_theories thy0 addr0 =
             end
        in Isabelle_Thread.fork (  Isabelle_Thread.params "REPL-worker"
                                 |> Isabelle_Thread.interrupts )
-                               (fn () => (
+                               (fn () => \<^try>\<open>(
                 REPL.init_repler base_dir_of_theories thy0
               ; Thread_Data.put sockets (SOME (cin, cout))
               ; REPL.record_state "init"
               ; loop ()
-           ))
+           ) finally (
+                BinIO.StreamIO.closeOut cout
+              ; BinIO.StreamIO.closeIn  (!cin)
+           ) \<close>)
          ; ()
       end
       handle CONTINUE => () )
