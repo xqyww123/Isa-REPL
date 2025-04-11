@@ -175,6 +175,32 @@ fun column_to_offset src (line, column) =
 
 structure Postab = Table(type key = string * int val ord = prod_ord fast_string_ord int_ord);
 
+val supervision_threads = Synchronized.var "supervision_threads" NONE
+fun run_resource_supervison base_dir =
+  let val sleep_time = Time.fromSeconds 10
+      fun run () =
+        File_Stream.open_append (fn stream => (
+            while true do let
+                val stat = ML_Statistics.get()
+             in File_Stream.outputs stream [Time.now () |> Time.toString, " : "]
+              ; List.app (fn (k,v) =>
+                  File_Stream.outputs stream [k, " = ", v, "  "] ) stat
+              ; File_Stream.outputs stream ["\n"]
+              ; BinIO.flushOut stream
+              ; OS.Process.sleep sleep_time
+            end
+          ; ()
+         )) (Path.append base_dir (Path.basic "ML_res_log"))
+   in Synchronized.change supervision_threads (
+        fn NONE => SOME (
+                   Isabelle_Thread.fork ( Isabelle_Thread.params "ML_resource_supervison"
+                                       |> Isabelle_Thread.stack_limit (1024 * 256)
+                                       |> Isabelle_Thread.interrupts )
+                                        run )
+         | some => some)
+  end
+
+
 fun startup base_dir_of_theories thy0 addr0 =
   let val _ = if File.is_dir base_dir_of_theories
               then warning ("The base_dir_of_theories already exists. The shell may overwrite files.")
@@ -211,6 +237,7 @@ fun startup base_dir_of_theories thy0 addr0 =
    in writeln msg
     ; Output.physical_stdout msg
     ; Output.physical_stderr msg
+    ; run_resource_supervison base_dir_of_theories
     ; Isabelle_Thread.fork (  Isabelle_Thread.params ("REPL server " ^ addr0)
                            |> Isabelle_Thread.interrupts )  (fn () => (
       Synchronized.change servers (Symtab.update_new (addr0, Isabelle_Thread.self ()))
@@ -531,5 +558,6 @@ fun kill_server address =
   case Symtab.lookup (Synchronized.value servers) address
     of SOME thr => Isabelle_Thread.interrupt_thread thr
      | NONE => ()
+
 
 end
