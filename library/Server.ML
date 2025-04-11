@@ -179,7 +179,7 @@ val supervision_threads = Synchronized.var "supervision_threads" NONE
 fun run_resource_supervison base_dir =
   let val sleep_time = Time.fromSeconds 10
       fun run () =
-        File_Stream.open_append (fn stream => (
+        File_Stream.open_output (fn stream => (
             while true do let
                 val stat = ML_Statistics.get()
              in File_Stream.outputs stream [Time.now () |> Time.toString, " : "]
