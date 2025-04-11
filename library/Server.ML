@@ -178,11 +178,27 @@ structure Postab = Table(type key = string * int val ord = prod_ord fast_string_
 val supervision_threads = Synchronized.var "supervision_threads" NONE
 fun run_resource_supervison base_dir =
   let val sleep_time = Time.fromSeconds 10
+      val threshold = ceil (real (Value.parse_int (getenv "ML_MAX_HEAP") * 1000000000) * 0.95)
       fun run () =
-        File_Stream.open_output (fn stream => (
-            while true do let
+        File_Stream.open_output (fn stream =>
+         let val last_time = Unsynchronized.ref 0.0
+             val last_time_GC = Unsynchronized.ref 0.0
+             val bad_count = Unsynchronized.ref 0
+          in while true do let
                 val stat = ML_Statistics.get()
-             in File_Stream.outputs stream [Time.now () |> Time.toString, " : "]
+                val size_heap = Value.parse_int (the (AList.lookup (op =) stat "size_heap"))
+                val now_time = Value.parse_real (the (AList.lookup (op =) stat "time_elapsed"))
+                val now_time_GC = Value.parse_real (the (AList.lookup (op =) stat "time_elapsed_GC"))
+                val bad = size_heap > threshold andalso
+                            (now_time_GC - !last_time_GC) / (now_time - !last_time) >= 0.7
+             in last_time_GC := now_time_GC
+              ; last_time := now_time
+              ; if bad then bad_count := 1 + !bad_count
+                       else bad_count := 0
+              ; if !bad_count >= 3 then
+                    OS.Process.terminate OS.Process.failure
+                else ()
+              ; File_Stream.outputs stream [Time.now () |> Time.toString, " : "]
               ; List.app (fn (k,v) =>
                   File_Stream.outputs stream [k, " = ", v, "  "] ) stat
               ; File_Stream.outputs stream ["\n"]
@@ -190,7 +206,7 @@ fun run_resource_supervison base_dir =
               ; OS.Process.sleep sleep_time
             end
           ; ()
-         )) (Path.append base_dir (Path.basic "ML_res_log"))
+        end) (Path.append base_dir (Path.basic "ML_res_log"))
    in Synchronized.change supervision_threads (
         fn NONE => SOME (
                    Isabelle_Thread.fork ( Isabelle_Thread.params "ML_resource_supervison"
