@@ -127,7 +127,7 @@ class Client:
     A client for connecting Isabelle REPL
     """
 
-    VERSION = '0.9.5'
+    VERSION = '0.9.11'
 
     def __init__(self, addr, thy_qualifier, timeout=3600):
         """
@@ -203,7 +203,7 @@ class Client:
             self.sock.close()
             self.sock = None
 
-    def eval(self, source, timeout=None, import_dir=None):
+    def eval(self, source, timeout=None, cmd_timeout=None, import_dir=None):
         """
         The `eval` method ONLY accepts **complete** commands ---
         It is strictly forbiddened to split a command into multiple fragments and
@@ -228,7 +228,8 @@ class Client:
         Note, `outputs` can be None if you call `set_trace(false)` which disables
         the output printing.
 
-        Timeout: the milliseconds to wait for the evaluation to finish.
+        timeout: the milliseconds to wait for the evaluation to finish.
+        cmd_timeout: the milliseconds to wait for every single command other than sledgehammer and auto_sledgehammer.
         """
         if not isinstance(source, str):
             raise ValueError("the argument source must be a string")
@@ -238,7 +239,7 @@ class Client:
             mp.pack(source, self.cout)
         else:
             mp.pack("\x05eval", self.cout)
-            mp.pack((source, timeout, import_dir), self.cout)
+            mp.pack((source, timeout, cmd_timeout, import_dir), self.cout)
         self.cout.flush()
         return self.unpack.unpack()
 
@@ -761,6 +762,17 @@ class Client:
         if ret <= 0:
             ret = 1
         return ret
+
+    def set_cmd_timeout(self, timeout):
+        """
+        Set the timeout for commands other than sledgehammer and auto_sledgehammer.
+        """
+        if not (isinstance(timeout, int) or timeout is None):
+            raise ValueError("the argument `timeout` must be an int or None")
+        mp.pack("\x05cmd_timeout", self.cout)
+        mp.pack(timeout, self.cout)
+        self.cout.flush()
+        return Client._parse_control_(self.unpack.unpack())
 
     def kill(self):
         """

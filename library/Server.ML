@@ -263,7 +263,7 @@ fun startup base_dir_of_theories thy0 addr0 =
 
           val (version, cin) = MessagePackBinIO.Unpack.doUnpack
                                           (MessagePackBinIO.Unpack.unpackString) cin
-          val _ = if version = "0.9.5" then ()
+          val _ = if version = "0.9.11" then ()
                   else if version = "heartbeat"
                   then \<^try>\<open> (
                        output cout MessagePackBinIO.Pack.packUnit ()
@@ -274,7 +274,7 @@ fun startup base_dir_of_theories thy0 addr0 =
                      ; raise CONTINUE ) \<close>
                   else (
                     output_err cout "The server is connected with a wrong version of the client.\n\
-                             \Please run `pip install \"IsaREPL==0.9.5\" --force-reinstall` to update your client."
+                             \Please run `pip install \"IsaREPL==0.9.11\" --force-reinstall` to update your client."
                   ; BinIO.StreamIO.flushOut cout
                   ; BinIO.StreamIO.closeOut cout
                   ; BinIO.StreamIO.closeIn  cin
@@ -300,7 +300,8 @@ fun startup base_dir_of_theories thy0 addr0 =
                                          file = NONE,
                                          position_label = NONE,
                                          additional_libs = [],
-                                         import_dir = NONE }
+                                         import_dir = NONE,
+                                         single_cmd_timeout = NONE }
 
           fun iteration () =
             let open MessagePackBinIO.Unpack
@@ -399,7 +400,8 @@ fun startup base_dir_of_theories thy0 addr0 =
                                             file = #file (!cfg),
                                             position_label = #position_label (!cfg),
                                             additional_libs = #additional_libs (!cfg),
-                                            import_dir = #import_dir (!cfg) }
+                                            import_dir = #import_dir (!cfg),
+                                            single_cmd_timeout = #single_cmd_timeout (!cfg) }
                         in output cout packUnit ()
                        end
                  | "\005session-of" => let
@@ -447,7 +449,8 @@ fun startup base_dir_of_theories thy0 addr0 =
                                        file = SOME raw_path,
                                        position_label = NONE,
                                        additional_libs = #additional_libs (!cfg),
-                                       import_dir = SOME (Path.dir path) }
+                                       import_dir = SOME (Path.dir path),
+                                       single_cmd_timeout = #single_cmd_timeout (!cfg) }
                            val file = Path.implode (Path.expand path)
                            val (src, ofs) =
                                     case pos
@@ -496,9 +499,10 @@ fun startup base_dir_of_theories thy0 addr0 =
                          ; output cout (packList packString) errs
                        end
                  | "\005eval" => let
-                           val (src, timeout, import_dir) =
-                                  read (unpackTuple3 (
+                           val (src, timeout, timeout_single_cmd, import_dir) =
+                                  read (unpackTuple4 (
                                       unpackString,
+                                      unpackOption unpackInt,
                                       unpackOption unpackInt,
                                       unpackOption unpackString
                                   ))
@@ -506,7 +510,8 @@ fun startup base_dir_of_theories thy0 addr0 =
                                        file = #file (!cfg),
                                        position_label = #position_label (!cfg),
                                        additional_libs = #additional_libs (!cfg),
-                                       import_dir = Option.map Path.explode import_dir }
+                                       import_dir = Option.map Path.explode import_dir,
+                                       single_cmd_timeout = Option.map Time.fromMilliseconds timeout }
                            val timeout = Option.map Time.fromMilliseconds timeout
                            val ret = case timeout
                                        of NONE   => REPL.RE cfg src
@@ -528,12 +533,24 @@ fun startup base_dir_of_theories thy0 addr0 =
                                     file = #file (!cfg),
                                     position_label = #position_label (!cfg),
                                     additional_libs = merge (op =) (#additional_libs (!cfg), libs),
-                                    import_dir = #import_dir (!cfg) }
+                                    import_dir = #import_dir (!cfg),
+                                    single_cmd_timeout = #single_cmd_timeout (!cfg) }
                          ; output cout packUnit ()
                        end
                  | "\005numcpu" => let
                            val num = Multithreading.max_threads ()
                         in output cout packInt num
+                       end
+                 | "\005cmd_timeout" => let
+                           val time = read (unpackOption unpackInt)
+                                   |> Option.map Time.fromMilliseconds
+                        in cfg := { thy_qualifier = #thy_qualifier (!cfg),
+                                    file = #file (!cfg),
+                                    position_label = #position_label (!cfg),
+                                    additional_libs = #additional_libs (!cfg),
+                                    import_dir = #import_dir (!cfg),
+                                    single_cmd_timeout = time }
+                         ; output cout packUnit ()
                        end
                 end handle REPL.REPL_fail E =>
                        output_err cout E

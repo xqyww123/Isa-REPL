@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "IsaREPL"
-version = "0.9.9"
+version = "0.9.11"
 description = "Isabelle REPL client"
 readme = "README.md"
 license = "LGPL-2.1-or-later"

@@ -7,7 +7,8 @@ type cfg = { thy_qualifier : string,
              file : string option,
              position_label : string option,
              additional_libs : string list,
-             import_dir : Path.T option }
+             import_dir : Path.T option,
+             single_cmd_timeout: Time.time option }
 
 type collector = cfg
               -> {current_command: Command_Span.span,
@@ -162,7 +163,8 @@ type cfg = { thy_qualifier : string,
              file : string option,
              position_label : string option,
              additional_libs : string list,
-             import_dir : Path.T option }
+             import_dir : Path.T option,
+             single_cmd_timeout: Time.time option }
 
 type collector = cfg
               -> {current_command: Command_Span.span,
@@ -477,6 +479,12 @@ fun catch_state' wid plugin_output err command s : command_output = {
         errors  = trim_err err
     }
 
+fun apply_single_cmd_timeout (Command_Span.Span (Command_Span.Command_Span (name, _), toks)) =
+      let val bad = ["auto_sledgehammer", "sledgehammer"]
+       in not (member (op =) bad name) andalso
+          not (exists (fn tok => member (op =) bad (Token.content_of tok)) toks)
+      end
+
 fun RE cfg source : command_outputs =
   case Thread_Data.get state
     of NONE                  => {outputs=NONE, error=SOME "INTERNAL ERROR: state lost"}
@@ -520,7 +528,14 @@ fun RE cfg source : command_outputs =
         | loop ret errs [] (src::srcs) s =
             loop ret errs (parse_text (base_dir, origin_base_dir, cfg) register_theory' s src) srcs s
         | loop ret errs ((tr,current_cmd)::trs) srcs s =
-            case Toplevel.command_errors false tr s
+            case (case #single_cmd_timeout cfg
+                    of NONE => Toplevel.command_errors false tr s
+                     | SOME time =>
+                          if apply_single_cmd_timeout current_cmd
+                          then Timeout.apply time (Toplevel.command_errors false tr) s
+                               handle Timeout.TIMEOUT t =>
+                                  ([((serial(), "Timeout after " ^ Time.toString t ^ "s"), NONE)], NONE)
+                          else Toplevel.command_errors false tr s )
               of (err, NONE)    =>
                   let val Er = case trim_err err @ errs
                                  of [] => "Some error happens. Details may be given in the field `outputs.errors.` \
