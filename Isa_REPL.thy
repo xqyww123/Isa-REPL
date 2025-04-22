@@ -11,6 +11,4 @@ ML_file \<open>library/REPL_serializer.ML\<close>
 ML_file \<open>library/REPL_aux.ML\<close>
 ML_file \<open>library/Server.ML\<close>
 
-ML \<open>Time.toString (Time.fromSeconds 1)\<close>
-
 end
