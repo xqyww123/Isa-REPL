@@ -735,7 +735,10 @@ class Client:
         mp.pack("\x05file", self.cout)
         mp.pack((path, pos, timeout, cache_position, use_cache), self.cout)
         self.cout.flush()
-        return Client._parse_control_(self.unpack.unpack())
+        errs = Client._parse_control_(self.unpack.unpack())
+        if errs:
+            raise REPLFail('\n'.join(errs))
+        return None
 
     def add_lib(self, libs):
         """
