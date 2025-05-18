@@ -19,6 +19,6 @@ $BASE/example_sledgehammer.py $1 &
 $BASE/example_parse.py $1 &
 $BASE/example_context.py $1 &
 $BASE/example_rollback.py $1 &
-$BASE/eval_file.py $1 $(isabelle getenv -b ISABELLE_HOME)/src/HOL/List.thy
+$BASE/eval_file.py $1 $(isabelle getenv -b ISABELLE_HOME)/src/HOL/List.thy:8413:1
 
 

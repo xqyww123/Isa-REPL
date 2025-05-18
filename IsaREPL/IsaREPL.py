@@ -127,7 +127,7 @@ class Client:
     A client for connecting Isabelle REPL
     """
 
-    VERSION = '0.9.11'
+    VERSION = '0.10.0'
 
     def __init__(self, addr, thy_qualifier, timeout=3600):
         """
@@ -164,6 +164,7 @@ class Client:
             host, port = address.split(':')
             return (host, int(port))
 
+        self.addr = addr
         host, port = parse_address(addr)
         self.sock = socket.create_connection((host, port), timeout=timeout)
         self.cout = self.sock.makefile('wb')
@@ -173,7 +174,7 @@ class Client:
         mp.pack(Client.VERSION, self.cout)
         mp.pack(thy_qualifier, self.cout)
         self.cout.flush()
-        self.pid = Client._parse_control_(self.unpack.unpack())
+        (self.pid, self._client_id) = Client._parse_control_(self.unpack.unpack())
 
     @staticmethod
     def test_server(addr, timeout=60):
@@ -192,6 +193,18 @@ class Client:
     def __exit__(self, exc_type, exc_value, traceback):
         self.close()
 
+    @staticmethod
+    def kill_client(addr, client_id, timeout=60) -> bool:
+        host, port = addr.split(':')
+        with socket.create_connection((host, port), timeout=timeout) as sock:
+            with sock.makefile('wb') as cout:
+                with sock.makefile('rb', buffering=0) as cin:
+                    unpack = mp.Unpacker(cin)
+                    mp.pack("kill " + str(client_id), cout)
+                    cout.flush()
+                    return Client._parse_control_(unpack.unpack())
+
+
     def close(self):
         if self.cout:
             self.cout.close()
@@ -202,6 +215,7 @@ class Client:
         if self.sock:
             self.sock.close()
             self.sock = None
+        Client.kill_client(self.addr, self._client_id)
 
     def eval(self, source, timeout=None, cmd_timeout=None, import_dir=None):
         """

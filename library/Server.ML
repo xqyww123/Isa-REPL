@@ -249,6 +249,8 @@ fun startup base_dir_of_theories thy0 addr0 =
       val evaluation_cache_store = Synchronized.var "evaluation_cache_store" Symtab.empty
       val evaluation_cache_counter = Counter.make ()
 
+      val clients = Synchronized.var "REPL clients" (Inttab.empty : Isabelle_Thread.T Inttab.table)
+
       exception CONTINUE
    in writeln msg
     ; Output.physical_stdout msg
@@ -263,7 +265,7 @@ fun startup base_dir_of_theories thy0 addr0 =
 
           val (version, cin) = MessagePackBinIO.Unpack.doUnpack
                                           (MessagePackBinIO.Unpack.unpackString) cin
-          val _ = if version = "0.9.11" then ()
+          val _ = if version = "0.10.0" then ()
                   else if version = "heartbeat"
                   then \<^try>\<open> (
                        output cout MessagePackBinIO.Pack.packUnit ()
@@ -272,15 +274,32 @@ fun startup base_dir_of_theories thy0 addr0 =
                        BinIO.StreamIO.closeOut cout
                      ; BinIO.StreamIO.closeIn  cin
                      ; raise CONTINUE ) \<close>
+                  else if String.isPrefix "kill " version
+                  then \<^try>\<open>
+                   let val target = String.substring (version, 5, size version - 5)
+                                 |> try Value.parse_nat
+                                 |> the_default ~1
+                       val dict = Synchronized.value clients
+                       val found =
+                            case Inttab.lookup dict target
+                              of SOME T => (
+                                   Isabelle_Thread.interrupt_thread T
+                                 ; true )
+                               | NONE   => false
+                    in output cout MessagePackBinIO.Pack.packBool found
+                     ; BinIO.StreamIO.flushOut cout
+                   end
+                    finally (
+                       BinIO.StreamIO.closeOut cout
+                     ; BinIO.StreamIO.closeIn  cin
+                     ; raise CONTINUE )\<close>
                   else (
                     output_err cout "The server is connected with a wrong version of the client.\n\
-                             \Please run `pip install \"IsaREPL==0.9.11\" --force-reinstall` to update your client."
+                             \Please run `pip install \"IsaREPL==0.10.0\" --force-reinstall` to update your client."
                   ; BinIO.StreamIO.flushOut cout
                   ; BinIO.StreamIO.closeOut cout
                   ; BinIO.StreamIO.closeIn  cin
                   ; raise CONTINUE)
-          val _ = output cout MessagePackBinIO.Pack.packInt (Value.parse_int (getenv_strict "REPL_PID"))
-          val _ = BinIO.StreamIO.flushOut cout
 
           val (thy_qualifier, cin) = MessagePackBinIO.Unpack.doUnpack
                                           (MessagePackBinIO.Unpack.unpackString) cin
@@ -571,15 +590,23 @@ fun startup base_dir_of_theories thy0 addr0 =
             end
        in Isabelle_Thread.fork (  Isabelle_Thread.params "REPL-worker"
                                 |> Isabelle_Thread.interrupts )
-                               (fn () => \<^try>\<open>(
-                REPL.init_repler base_dir_of_theories thy0
-              ; Thread_Data.put sockets (SOME (cin, cout))
+                               (fn () =>
+            let val id = REPL.init_repler base_dir_of_theories thy0
+             in \<^try>\<open>
+            let open MessagePackBinIO.Pack
+             in Thread_Data.put sockets (SOME (cin, cout))
               ; REPL.record_state "init"
+              ; Synchronized.change clients (Inttab.update (id, Isabelle_Thread.self ()))
+              ; output cout (packPair (packInt, packInt))
+                            (Value.parse_int (getenv_strict "REPL_PID"), id)
+              ; BinIO.StreamIO.flushOut cout
               ; loop ()
-           ) finally (
+            end finally (
                 BinIO.StreamIO.closeOut cout
-              ; BinIO.StreamIO.closeIn  (!cin)
-           ) \<close>)
+              ; BinIO.StreamIO.closeIn (!cin)
+              ; Synchronized.change clients (Inttab.delete_safe id)
+           ) \<close>
+            end )
          ; ()
       end
       handle CONTINUE => () )
