@@ -499,6 +499,7 @@ fun startup base_dir_of_theories thy0 addr0 =
                                       else ("init", src)
                            val errs = #errors (REPL.rollback_state_global cfg snapshot evaluation_cache_store)
                            val timeout = Option.map Time.fromMilliseconds timeout
+                           val _ = REPL.set_base_dir (Path.dir path)
                            val errs = if to_eval = ""
                                       then errs
                                       else case timeout
@@ -506,6 +507,7 @@ fun startup base_dir_of_theories thy0 addr0 =
                                               REPL.collect_erros (REPL.RE cfg to_eval) errs
                                          | SOME t =>
                                               REPL.collect_erros (Timeout.apply t (REPL.RE cfg) to_eval) errs
+                           val _ = REPL.reset_base_dir ()
                         in if null errs andalso cache_the_position andalso is_some ofs
                            then let
                                 val name = "_" ^ string_of_int (evaluation_cache_counter ())

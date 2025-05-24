@@ -129,6 +129,7 @@ val split_thy_headers : Symbol_Pos.T list -> Symbol_Pos.T list list
 val pure_keywords : Keyword.keywords
 
 (* Set base_dir *)
+(*TODO: move this to cfg*)
 
 val get_base_dir : unit -> Path.T
 val set_base_dir : Path.T -> unit
