@@ -215,7 +215,10 @@ class Client:
         if self.sock:
             self.sock.close()
             self.sock = None
-        Client.kill_client(self.addr, self._client_id)
+        try:
+            Client.kill_client(self.addr, self._client_id)
+        except:
+            pass
 
     def eval(self, source, timeout=None, cmd_timeout=None, import_dir=None):
         """
