@@ -8,7 +8,8 @@ type cfg = { thy_qualifier : string,
              position_label : string option,
              additional_libs : string list,
              import_dir : Path.T option,
-             single_cmd_timeout: Time.time option }
+             single_cmd_timeout: Time.time option,
+             attributes : string list }
 
 type collector = cfg
               -> {current_command: Command_Span.span,
@@ -41,7 +42,7 @@ type command_outputs = {
         error : string option
 }
 
-val collect_erros : command_outputs -> string list -> string list
+val collect_erros : command_outputs -> string list
 
 exception REPL_fail of string
 
@@ -50,6 +51,7 @@ type Session_ID = int
 val init_repler : Path.T (*base_dir used to store outputs*)
                -> theory option (*Initial theory*) -> Session_ID
 val RE : cfg -> string -> command_outputs
+val declare : string list (*attributes*) -> unit
 val lex_commands : cfg -> string -> (Position.T * string) list
 val fast_lex : string -> (Position.T * string) list
 
@@ -165,7 +167,8 @@ type cfg = { thy_qualifier : string,
              position_label : string option,
              additional_libs : string list,
              import_dir : Path.T option,
-             single_cmd_timeout: Time.time option }
+             single_cmd_timeout: Time.time option,
+             attributes : string list }
 
 type collector = cfg
               -> {current_command: Command_Span.span,
@@ -193,8 +196,8 @@ type command_outputs = {
         error : string option
 }
 
-fun collect_erros {outputs, error} ret =
-      maps #errors (these outputs) @ the_list error @ ret
+fun collect_erros {outputs, error} =
+      maps #errors (these outputs) @ the_list error
 
 
 (** Plugin **)
@@ -357,7 +360,7 @@ fun add_evaluated_theories entry =
 fun add_global_theories entry =
   Synchronized.change global_theories (Symtab.update entry)
 
-fun init_thy ignore_imports (base_dir, {thy_qualifier, additional_libs, import_dir,...}) source =
+fun init_thy ignore_imports (base_dir, {thy_qualifier, additional_libs, import_dir, attributes,...}) source =
   let val toks = Token.tokenize pure_keywords {strict = false} source
       val i = find_index is_theory_tok toks
    in if i = ~1
@@ -386,6 +389,18 @@ fun init_thy ignore_imports (base_dir, {thy_qualifier, additional_libs, import_d
             if null parents then [Pure] else parents
    in Resources.begin_theory base_dir header parents
    |> Config.put_global Printer.show_markup false
+   |> (fn thy =>
+      let val ctxt = Proof_Context.init_global thy
+          val keywords = Thy_Header.get_keywords thy
+          val attrs = map (Attrib.attribute_cmd ctxt)
+                          (map ( Input.string
+                              #> Input.source_explode
+                              #> Token.tokenize keywords {strict = true}
+                              #> filter Token.is_proper
+                               ) attributes)
+       in Thm.theory_attributes attrs Drule.dummy_thm thy
+       |> snd
+      end)
    |> SOME
   end
   end
@@ -437,7 +452,7 @@ fun lex_split drop_first drop_if_no_meet kws ATTACH P source =
 
 val split_thy_headers = lex_split false false pure_keywords Token.is_command_modifier is_theory_tok
 
-fun parse_text (base_dir, origin_base_dir, cfg) register_theory' state source =
+fun parse_text (base_dir, origin_base_dir, (cfg:cfg)) register_theory' state source =
   let val write_thy = register_theory' andalso
                       Path.expand origin_base_dir = Path.expand base_dir
       val thy = get_thy write_thy (base_dir,cfg) state source
@@ -486,7 +501,7 @@ fun apply_single_cmd_timeout (Command_Span.Span (Command_Span.Command_Span (name
           not (exists (fn tok => member (op =) bad (Token.content_of tok)) toks)
       end
 
-fun RE cfg source : command_outputs =
+fun RE (cfg:cfg) source : command_outputs =
   case Thread_Data.get state
     of NONE                  => {outputs=NONE, error=SOME "INTERNAL ERROR: state lost"}
      | SOME (s0,cnt,(trace, register_theory'),H) =>
@@ -589,6 +604,31 @@ fun init_repler base_base thy =
     ; id
   end
 
+fun declare attributes =
+  case Thread_Data.get state
+    of NONE => raise REPL_fail "INTERNAL ERROR: state lost"
+     | SOME (s0,cnt,xx,H) =>
+   let fun app ctxt0 =
+        let val ctxt = Context.proof_of ctxt0
+            val keywords = Thy_Header.get_keywords (Context.theory_of ctxt0)
+            val attrs = map (Attrib.attribute_cmd ctxt)
+                            (map ( Input.string
+                                #> Input.source_explode
+                                #> Token.tokenize keywords {strict = true}
+                                #> filter Token.is_proper
+                                 ) attributes)
+         in Context.mapping (Thm.theory_attributes attrs Drule.dummy_thm #> snd)
+                            (Thm.proof_attributes attrs Drule.dummy_thm #> snd)
+                            ctxt0
+        end
+       val tr = if Toplevel.is_proof s0
+                then Toplevel.proof (Proof.map_context (Context.proof_map app)) Toplevel.empty
+                else if Toplevel.is_theory s0
+                then Toplevel.theory (Context.theory_map app) Toplevel.empty
+                else Toplevel.local_theory NONE NONE (Context.proof_map app) Toplevel.empty
+       val s' = Toplevel.command_exception false tr s0
+    in Thread_Data.put state (SOME (s',cnt,xx,H))
+   end
 
 
 (** Lex commands **)

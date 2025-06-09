@@ -1,1 +1,1 @@
-from .IsaREPL import Client, REPLFail, Position, SYMBOLS, REVERSE_SYMBOLS
+from .IsaREPL import Client, REPLFail, Position, get_SYMBOLS, get_REVERSE_SYMBOLS

@@ -265,7 +265,7 @@ fun startup base_dir_of_theories thy0 addr0 =
 
           val (version, cin) = MessagePackBinIO.Unpack.doUnpack
                                           (MessagePackBinIO.Unpack.unpackString) cin
-          val _ = if version = "0.10.0" then ()
+          val _ = if version = "0.11.0" then ()
                   else if version = "heartbeat"
                   then \<^try>\<open> (
                        output cout MessagePackBinIO.Pack.packUnit ()
@@ -320,7 +320,8 @@ fun startup base_dir_of_theories thy0 addr0 =
                                          position_label = NONE,
                                          additional_libs = [],
                                          import_dir = NONE,
-                                         single_cmd_timeout = NONE }
+                                         single_cmd_timeout = NONE,
+                                         attributes = [] }
 
           fun iteration () =
             let open MessagePackBinIO.Unpack
@@ -420,7 +421,8 @@ fun startup base_dir_of_theories thy0 addr0 =
                                             position_label = #position_label (!cfg),
                                             additional_libs = #additional_libs (!cfg),
                                             import_dir = #import_dir (!cfg),
-                                            single_cmd_timeout = #single_cmd_timeout (!cfg) }
+                                            single_cmd_timeout = #single_cmd_timeout (!cfg),
+                                            attributes = #attributes (!cfg) }
                         in output cout packUnit ()
                        end
                  | "\005session-of" => let
@@ -451,14 +453,15 @@ fun startup base_dir_of_theories thy0 addr0 =
                        end
                  | "\005file" => let
                            (*if use_cache, will find the nearest cached evaluation state to continue*)
-                           val (raw_path, pos, timeout, cache_the_position, use_cache) =
-                                  read (unpackTuple5 (
+                           val (raw_path, pos, timeout, cache_the_position, use_cache, attrs) =
+                                  read (unpackTuple6 (
                                       unpackString,
                                       unpackOption (
                                         unpackPair (unpackInt, unpackInt)),
                                       unpackOption unpackInt,
                                       unpackBool,
-                                      unpackBool
+                                      unpackBool,
+                                      unpackList unpackString
                                   ))
                            val path = Path.explode raw_path
                            val session = REPL_Aux.parse_session_name path
@@ -469,7 +472,8 @@ fun startup base_dir_of_theories thy0 addr0 =
                                        position_label = NONE,
                                        additional_libs = #additional_libs (!cfg),
                                        import_dir = SOME (Path.dir path),
-                                       single_cmd_timeout = #single_cmd_timeout (!cfg) }
+                                       single_cmd_timeout = #single_cmd_timeout (!cfg),
+                                       attributes = attrs }
                            val file = Path.implode (Path.expand path)
                            val (src, ofs) =
                                     case pos
@@ -498,15 +502,22 @@ fun startup base_dir_of_theories thy0 addr0 =
                                             end
                                       else ("init", src)
                            val errs = #errors (REPL.rollback_state_global cfg snapshot evaluation_cache_store)
-                           val timeout = Option.map Time.fromMilliseconds timeout
                            val _ = REPL.set_base_dir (Path.dir path)
                            val errs = if to_eval = ""
                                       then errs
                                       else case timeout
                                         of NONE   =>
-                                              REPL.collect_erros (REPL.RE cfg to_eval) errs
+                                              REPL.collect_erros (REPL.RE cfg to_eval) @ errs
                                          | SOME t =>
-                                              REPL.collect_erros (Timeout.apply t (REPL.RE cfg) to_eval) errs
+                                            let val relaxed = Time.fromMilliseconds (t + 200)
+                                                val strict = Time.fromMilliseconds t
+                                                val (time, output) = Timing.timing (Timeout.apply relaxed (REPL.RE cfg)) to_eval
+                                                val time' = #elapsed time
+                                                val errs' = REPL.collect_erros output
+                                             in if not (null errs') andalso time' > strict
+                                               then raise Timeout.TIMEOUT time'
+                                               else errs' @ errs
+                                            end
                            val _ = REPL.reset_base_dir ()
                         in if null errs andalso cache_the_position andalso is_some ofs
                            then let
@@ -532,7 +543,8 @@ fun startup base_dir_of_theories thy0 addr0 =
                                        position_label = #position_label (!cfg),
                                        additional_libs = #additional_libs (!cfg),
                                        import_dir = Option.map Path.explode import_dir,
-                                       single_cmd_timeout = Option.map Time.fromMilliseconds timeout_single_cmd }
+                                       single_cmd_timeout = Option.map Time.fromMilliseconds timeout_single_cmd,
+                                       attributes = #attributes (!cfg) }
                            val timeout = Option.map Time.fromMilliseconds timeout
                            val ret = case timeout
                                        of NONE   => REPL.RE cfg src
@@ -544,7 +556,7 @@ fun startup base_dir_of_theories thy0 addr0 =
                                                        then raise Timeout.TIMEOUT (#cpu elapsed)
                                                        else ret
                                                        
-                                             in ret
+                                             in ret'
                                             end
                          in doPack REPL_Serialize.command_outputs_packer ret cout
                        end
@@ -555,7 +567,8 @@ fun startup base_dir_of_theories thy0 addr0 =
                                     position_label = #position_label (!cfg),
                                     additional_libs = merge (op =) (#additional_libs (!cfg), libs),
                                     import_dir = #import_dir (!cfg),
-                                    single_cmd_timeout = #single_cmd_timeout (!cfg) }
+                                    single_cmd_timeout = #single_cmd_timeout (!cfg),
+                                    attributes = #attributes (!cfg) }
                          ; output cout packUnit ()
                        end
                  | "\005numcpu" => let
@@ -570,7 +583,13 @@ fun startup base_dir_of_theories thy0 addr0 =
                                     position_label = #position_label (!cfg),
                                     additional_libs = #additional_libs (!cfg),
                                     import_dir = #import_dir (!cfg),
-                                    single_cmd_timeout = time }
+                                    single_cmd_timeout = time,
+                                    attributes = #attributes (!cfg) }
+                         ; output cout packUnit ()
+                       end
+                 | "\005config" => let
+                           val attrs = read (unpackList unpackString)
+                        in REPL.declare attrs
                          ; output cout packUnit ()
                        end
                 end handle REPL.REPL_fail E =>

@@ -56,11 +56,25 @@ def _load_symbols(path, symbols={}, reverse_symbols={}):
                     continue
     return symbols, reverse_symbols
 
-isabelle_home = os.popen("isabelle getenv -b ISABELLE_HOME").read().strip()
-isabelle_home_user = os.popen("isabelle getenv -b ISABELLE_HOME_USER").read().strip()
-SYMBOLS, REVERSE_SYMBOLS = {}, {}
-for file in [f"{isabelle_home}/etc/symbols", f"{isabelle_home_user}/etc/symbols"]:
-    SYMBOLS, REVERSE_SYMBOLS = _load_symbols(file, SYMBOLS, REVERSE_SYMBOLS)
+SYMBOLS_CACHE = ({}, {})
+
+def get_SYMBOLS_AND_REVERSED():
+    if SYMBOLS_CACHE:
+        return SYMBOLS_CACHE
+    isabelle_home = os.popen("isabelle getenv -b ISABELLE_HOME").read().strip()
+    isabelle_home_user = os.popen("isabelle getenv -b ISABELLE_HOME_USER").read().strip()
+    SYMBOLS, REVERSE_SYMBOLS = {}, {}
+    for file in [f"{isabelle_home}/etc/symbols", f"{isabelle_home_user}/etc/symbols"]:
+        SYMBOLS, REVERSE_SYMBOLS = _load_symbols(file, SYMBOLS, REVERSE_SYMBOLS)
+    SYMBOLS_CACHE = (SYMBOLS, REVERSE_SYMBOLS)
+    return SYMBOLS_CACHE
+
+def get_SYMBOLS():
+    return get_SYMBOLS_AND_REVERSED()[0]
+
+def get_REVERSE_SYMBOLS():
+    return get_SYMBOLS_AND_REVERSED()[1]
+
 
 class Position:
     def __init__(self, line, column, file):
@@ -127,7 +141,7 @@ class Client:
     A client for connecting Isabelle REPL
     """
 
-    VERSION = '0.10.0'
+    VERSION = '0.11.0'
 
     def __init__(self, addr, thy_qualifier, timeout=3600):
         """
@@ -720,8 +734,9 @@ class Client:
         self.cout.flush()
         return Client._parse_control_(self.unpack.unpack())
 
-    def file(self, path : str, line : int = ~1, column : int = 0, timeout : int | None = None,
-            cache_position : bool = False, use_cache : bool = False):
+    def file(self, path : str, line : int = ~1, column : int = 0,
+             timeout : int | None = None, attrs : list[str] = [],
+             cache_position : bool = False, use_cache : bool = False):
         """
         Evaluate the file at the given path.
         This method only returns erros encountered during the evaluation.
@@ -746,11 +761,13 @@ class Client:
             raise ValueError("the argument `cache_position` must be a bool")
         if not isinstance(use_cache, bool):
             raise ValueError("the argument `use_cache` must be a bool")
+        if not isinstance(attrs, list):
+            raise ValueError("the argument `attrs` must be a list")
         pos = None
         if line >= 0:
             pos = (line, column)
         mp.pack("\x05file", self.cout)
-        mp.pack((path, pos, timeout, cache_position, use_cache), self.cout)
+        mp.pack((path, pos, timeout, cache_position, use_cache, attrs), self.cout)
         self.cout.flush()
         errs = Client._parse_control_(self.unpack.unpack())
         if errs:
@@ -813,7 +830,7 @@ class Client:
         # Function to replace each match with its Unicode equivalent if available
         def replace_symbol(match):
             symbol = match.group(0)
-            return SYMBOLS.get(symbol, symbol)
+            return get_SYMBOLS().get(symbol, symbol)
         
         # Use re.sub to efficiently perform all replacements at once
         return re.sub(pattern, replace_symbol, src)
@@ -827,5 +844,5 @@ class Client:
         """
         # map every character `c` in `src` to REVERSE_SYMBOLS[c] if c in REVERSE_SYMBOLS, otherwise c
         # Use str.translate with a translation table for maximum efficiency
-        trans_table = str.maketrans(REVERSE_SYMBOLS)
+        trans_table = str.maketrans(get_REVERSE_SYMBOLS())
         return src.translate(trans_table)
