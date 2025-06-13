@@ -295,7 +295,7 @@ fun startup base_dir_of_theories thy0 addr0 =
                      ; raise CONTINUE )\<close>
                   else (
                     output_err cout "The server is connected with a wrong version of the client.\n\
-                             \Please run `pip install \"IsaREPL==0.10.0\" --force-reinstall` to update your client."
+                             \Please run `pip install \"IsaREPL==0.11.0\" --force-reinstall` to update your client."
                   ; BinIO.StreamIO.flushOut cout
                   ; BinIO.StreamIO.closeOut cout
                   ; BinIO.StreamIO.closeIn  cin
