@@ -592,6 +592,18 @@ fun startup base_dir_of_theories thy0 addr0 =
                         in REPL.declare attrs
                          ; output cout packUnit ()
                        end
+                 | "\005path" => let
+                           val (master_dir, name) = read (unpackPair (unpackString, unpackString))
+                           val cfg = { thy_qualifier = Long_Name.qualifier name,
+                                       file = NONE,
+                                       position_label = NONE,
+                                       additional_libs = [],
+                                       import_dir = SOME (Path.explode master_dir),
+                                       single_cmd_timeout = NONE,
+                                       attributes = [] }
+                           val path = REPL.path_of_the_theory cfg name
+                        in output cout packString (Path.implode path)
+                       end
                 end handle REPL.REPL_fail E =>
                        output_err cout E
               else let

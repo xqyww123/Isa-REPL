@@ -846,3 +846,13 @@ class Client:
         # Use str.translate with a translation table for maximum efficiency
         trans_table = str.maketrans(get_REVERSE_SYMBOLS())
         return src.translate(trans_table)
+
+    def path_of_theory(self, theory_name, master_directory):
+        if not isinstance(theory_name, str):
+            raise ValueError("the argument `theory_name` must be a string")
+        if not isinstance(master_directory, str):
+            raise ValueError("the argument `master_directory` must be a string")
+        mp.pack("\x05path", self.cout)
+        mp.pack((master_directory, theory_name), self.cout)
+        self.cout.flush()
+        return Client._parse_control_(self.unpack.unpack())

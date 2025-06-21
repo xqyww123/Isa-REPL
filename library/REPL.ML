@@ -118,6 +118,8 @@ val origin_writeln : string list -> unit
 val origin_tracing : string list -> unit
 val origin_warning : string list -> unit
 
+val path_of_the_theory : cfg -> string -> Path.T
+
 (* Library Control *)
 
     (*additional imports that will be injected into every evaluation target*)
@@ -914,5 +916,31 @@ fun reset_base_dir () =
     of NONE              => raise REPL_fail  "INTERNAL ERROR: state lost"
      | SOME (wid, _, origin_base, H) =>
        Thread_Data.put Session_ID (SOME (wid, origin_base, origin_base, H))
+
+(** Auxiliary **)
+
+val dot_path = Path.explode "."
+
+fun path_of_the_theory (cfg:cfg) name =
+  let val dir = the_default Path.root (#import_dir cfg)
+      val {master_dir, theory_name, ...} = Resources.import_name (#thy_qualifier cfg) dir name
+      val evaluated_theories = the_default Symtab.empty (Thread_Data.get evaluated_theories)
+      fun path_of thy =
+        Path.append (Resources.master_directory thy)
+                    (Path.basic (Context.theory_name {long=false} thy ^ ".thy"))
+   in case Symtab.lookup evaluated_theories theory_name
+        of SOME thy => path_of thy
+         | NONE     => (
+      case Thy_Info.lookup_theory name
+        of SOME thy => path_of thy
+         | NONE     =>
+      case Symtab.lookup (Synchronized.value global_theories) name
+        of SOME thy => path_of thy
+         | NONE =>
+      if master_dir = dot_path
+      then raise REPL_fail ("Fail to infer the path of the theory " ^ name)
+      else Path.append master_dir (Path.basic (Long_Name.base_name theory_name ^ ".thy")) 
+      )
+  end
 
 end
