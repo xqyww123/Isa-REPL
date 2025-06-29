@@ -856,3 +856,24 @@ class Client:
         mp.pack((master_directory, theory_name), self.cout)
         self.cout.flush()
         return Client._parse_control_(self.unpack.unpack())
+    
+    def parse_thy_header(self, header_src):
+        """
+        Return: (fully_quantified_theory_name, theorys to import, keyword declarations)
+        where fully_quantified_theory_name is a string,
+              `theorys to import` is a list of strings, qualified or not as in the same shape of the given source,
+        """
+        if not isinstance(header_src, str):
+            raise ValueError("the argument `header_src` must be a string")
+        lines = self.fast_lex(header_src)
+        theory_line = None
+        for _, line in lines:
+            if line.strip().startswith('theory'):
+                theory_line = line.strip()
+                break
+        if not theory_line:
+            raise ValueError("no `theory` declaration found in the given `header_src`")
+        mp.pack("\x05thy_header", self.cout)
+        mp.pack(theory_line, self.cout)
+        self.cout.flush()
+        return Client._parse_control_(self.unpack.unpack())

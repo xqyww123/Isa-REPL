@@ -119,6 +119,7 @@ val origin_tracing : string list -> unit
 val origin_warning : string list -> unit
 
 val path_of_the_theory : cfg -> string -> Path.T
+val parse_thy_header : cfg -> string -> Thy_Header.header
 
 (* Library Control *)
 
@@ -941,6 +942,22 @@ fun path_of_the_theory (cfg:cfg) name =
       then raise REPL_fail ("Fail to infer the path of the theory " ^ name)
       else Path.append master_dir (Path.basic (Long_Name.base_name theory_name ^ ".thy")) 
       )
+  end
+
+fun parse_thy_header (cfg:cfg) text =
+  let val pos = Position.make {
+                  line=1, offset=1, end_offset=1,
+                  props= { label = the_default "" (#position_label cfg),
+                           file = the_default "#REPL" (#file cfg),
+                           id="" }
+                }
+      val symbs = Symbol_Pos.explode (text, pos)
+      val toks = Token.tokenize pure_keywords {strict = false} symbs
+      val header = Thy_Header.read_tokens pos toks
+      fun qualify_name {name,imports,keywords} =
+            {name=apfst (Long_Name.qualify (#thy_qualifier cfg)) name, imports=imports, keywords=keywords}
+      val header = qualify_name header
+   in header
   end
 
 end

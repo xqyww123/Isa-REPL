@@ -602,7 +602,24 @@ fun startup base_dir_of_theories thy0 addr0 =
                                        single_cmd_timeout = NONE,
                                        attributes = [] }
                            val path = REPL.path_of_the_theory cfg name
+                                   |> Path.expand
                         in output cout packString (Path.implode path)
+                       end
+                 | "\005thy_header" => let
+                           val src = read unpackString
+                           val h = REPL.parse_thy_header (!cfg) src
+                           fun packer {name, imports, keywords} =
+                               packTuple3 (
+                                  packString o fst,
+                                  packList (packString o fst),
+                                  packList (packPair (
+                                    packString o fst,
+                                    (fn x => packTuple3
+                                        (packString, packString, packList packString)
+                                        ((#kind x), (fst (#load_command x)), (#tags x))
+                                    )))
+                                  ) (name, imports, keywords)
+                        in output cout packer h
                        end
                 end handle REPL.REPL_fail E =>
                        output_err cout E
