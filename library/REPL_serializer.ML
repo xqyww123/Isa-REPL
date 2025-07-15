@@ -11,6 +11,7 @@ val s_expression : term -> string
 val s_expression_packer : term MessagePackBinIO.Pack.packer
 val pack_context : bool -> Context.generic -> REPL.context MessagePackBinIO.Pack.packer
 val s_expr_typ : typ -> string list -> string list
+val pp_of : Context.generic -> string -> term MessagePackBinIO.Pack.packer
 
 end
 
@@ -149,5 +150,11 @@ fun pack_context s_expr ctxt ({
   end
 
 end
+
+fun pp_of _ "sexpr" = s_expression_packer
+  | pp_of ctxt "pretty" = term_string ctxt
+  | pp_of _ name =
+      raise REPL_fail ("Unknown term printer " ^ name ^ ". Unknown printers: ['sexpr', 'pretty']")
+  
 
 end

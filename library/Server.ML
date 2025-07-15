@@ -653,6 +653,27 @@ fun startup base_dir_of_theories thy0 addr0 =
                                   ) (name, imports, keywords)
                         in output cout packer h
                        end
+                  | "\005premise_selection" => let
+                           val (num, methods, params, pp) = read (unpackTuple4
+                                      (unpackInt,
+                                       unpackList unpackString,
+                                       unpackPairList (unpackString, unpackString),
+                                       unpackString))
+                           val ts = REPL.get_toplevel_state ()
+                           val params = Sledgehammer_Commands.default_params @{theory} params
+                           val ret = REPL.premise_selection params Sledgehammer_Fact.no_fact_override num
+                                  |> map_filter (fn (x, facts) =>
+                                        if member (op =) methods x
+                                        then SOME facts
+                                        else NONE )
+
+                           val ctxt = Toplevel.context_of ts
+                           val pp = REPL_Serialize.pp_of (Context.Proof ctxt) pp
+
+                           val ret = fold (fold ( insert (op = o apply2 fst)
+                                                o apfst fst )) ret []
+                        in output cout (packPairList (packString, pp o Thm.prop_of)) ret
+                       end
                 end handle REPL.REPL_fail E =>
                        output_err cout E
               else let

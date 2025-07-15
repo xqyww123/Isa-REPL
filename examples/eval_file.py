@@ -11,7 +11,7 @@ Example
 
 """
 
-from IsaREPL import Client
+from IsaREPL import Client, REPLFail
 import sys
 
 if len(sys.argv) != 3:
@@ -35,9 +35,11 @@ c.set_register_thy (False) # preventing the REPL to reigster he evaluated theori
 def is_empty(obj):
     return obj == [] or obj == ""
 
-ret = c.file (target, line=line, column=column, cache_position=True, use_cache=True)
-print ('errors encountered:')
-print(ret)
+try:
+    c.file (target, line=line, column=column, cache_position=True, use_cache=True)
+except REPLFail as e:
+    print ('errors encountered:')
+    print(e)
 
 print("success")
 exit(0)

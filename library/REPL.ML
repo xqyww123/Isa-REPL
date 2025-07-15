@@ -96,6 +96,9 @@ val retrieve_fact : string -> Proof.context * thm list
 
 val trim_makrup  : string -> string
 val sledgehammer : int (*timeout in seconds*) -> string
+val premise_selection : Sledgehammer_Prover.params ->
+      Sledgehammer_Fact.fact_override ->
+        int -> (string * Sledgehammer_Fact.fact list) list
 
 (* Proof Context *)
 
@@ -133,6 +136,8 @@ val add_global_theories : string * theory -> unit
 
 val split_thy_headers : Symbol_Pos.T list -> Symbol_Pos.T list list
 val pure_keywords : Keyword.keywords
+(*DEBUG*)
+val global_theories : theory Symtab.table Synchronized.var
 
 end
 
@@ -838,6 +843,19 @@ fun sledgehammer timeout' =
            val (prf, _) = Phi_Sledgehammer_Solver.auto true Sledgehammer_Fact.no_fact_override NONE ctxt goal
         in prf
        end) ()
+       end
+     | NONE      => raise REPL_fail "Not in a proof context." )
+
+
+fun premise_selection param override number =
+  (*number: how many facts do you want me to return*)
+  case Thread_Data.get state
+    of NONE           => raise REPL_fail  "INTERNAL ERROR: state lost"
+     | SOME (s,_,_,_) => (
+  case try Toplevel.proof_of s
+    of SOME stat =>
+       let val {context, facts, goal} = Proof.raw_goal stat
+        in Premise_Selection.SH_select param override number context facts goal
        end
      | NONE      => raise REPL_fail "Not in a proof context." )
 

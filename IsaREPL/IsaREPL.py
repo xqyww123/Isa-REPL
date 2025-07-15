@@ -887,3 +887,27 @@ class Client:
         mp.pack(theory_line, self.cout)
         self.cout.flush()
         return Client._parse_control_(self.unpack.unpack())
+    
+    def premise_selection(self, number : int, methods : list[str], params : dict[str, str] = {}, printer : str='pretty'):
+        """
+        Conduct the premise selection provided by Sledgehammer.
+        @param number: the number of relevant premises to return
+        @param methods: the methods to use for premise selection, any of ['mesh', 'mepo', 'mash']
+        @param params: the parameters sent to Sledgehammer. Check Sledgehammer's user guide for details.
+        @param printer: the printer to print the expressions of the retrived lemmas,
+                        'pretty' for the system pretty printing, 'sexpr' for S-expression.
+        @return: a dictionary from the name of the retrived lemmas to their expressions.
+        """
+        if not isinstance(number, int):
+            raise ValueError("the argument `number` must be an int")
+        if not isinstance(methods, list):
+            raise ValueError("the argument `methods` must be a list")
+        if not isinstance(params, dict):
+            raise ValueError("the argument `params` must be a dict")
+        if not isinstance(printer, str):
+            raise ValueError("the argument `printer` must be a string")
+        mp.pack("\x05premise_selection", self.cout)
+        mp.pack((number, methods, params, printer), self.cout)
+        self.cout.flush()
+        return Client._parse_control_(self.unpack.unpack())
+        
