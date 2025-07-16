@@ -312,9 +312,11 @@ fun column_of_pos src =
       fun calc offset = (
           if offset < !ofs then (ofs := 1; line := 1; colm := 0) else ()
         ; while !ofs < offset do
-            if Vector.sub (src, !ofs) = "\n"
-            then (line := !line + 1; ofs := !ofs + 1; colm := 0)
-            else (ofs := !ofs + 1; colm := !colm + 1)
+            let val s = Vector.sub (src, !ofs)
+             in if s = "\n"
+              then (line := !line + 1; ofs := !ofs + 1; colm := 0)
+              else (ofs := !ofs + 1; colm := !colm + size s)
+            end
         )
       fun of_pos pos =
         let val _ = calc (the (Position.offset_of pos))
