@@ -265,7 +265,7 @@ fun startup base_dir_of_theories thy0 addr0 =
 
           val (version, cin) = MessagePackBinIO.Unpack.doUnpack
                                           (MessagePackBinIO.Unpack.unpackString) cin
-          val _ = if version = "0.11.0" then ()
+          val _ = if version = "0.12.0" then ()
                   else if version = "heartbeat"
                   then \<^try>\<open> (
                        output cout MessagePackBinIO.Pack.packUnit ()
@@ -295,7 +295,7 @@ fun startup base_dir_of_theories thy0 addr0 =
                      ; raise CONTINUE )\<close>
                   else (
                     output_err cout "The server is connected with a wrong version of the client.\n\
-                             \Please run `pip install \"IsaREPL==0.11.0\" --force-reinstall` to update your client."
+                             \Please run `pip install \"IsaREPL==0.12.0\" --force-reinstall` to update your client."
                   ; BinIO.StreamIO.flushOut cout
                   ; BinIO.StreamIO.closeOut cout
                   ; BinIO.StreamIO.closeIn  cin
@@ -315,14 +315,33 @@ fun startup base_dir_of_theories thy0 addr0 =
                                    then "HOL"
                                    else default_session
                               else thy_qualifier
-          val cfg = Unsynchronized.ref { thy_qualifier = thy_qualifier,
-                                         file = NONE,
-                                         position_label = NONE,
-                                         additional_libs = [],
-                                         import_dir = NONE,
-                                         single_cmd_timeout = NONE,
-                                         attributes = [] }
-
+          val cfg : REPL.cfg Unsynchronized.ref =
+              Unsynchronized.ref { thy_qualifier = thy_qualifier,
+                                   file = NONE,
+                                   position_label = NONE,
+                                   additional_libs = [],
+                                   import_dir = NONE,
+                                   single_cmd_timeout = NONE,
+                                   attributes = [],
+                                   base_dir = Path.root,
+                                   can_write_thy = true }
+          fun target_thy_file path attrs =
+            let val session = REPL_Aux.parse_session_name path
+             in { thy_qualifier =
+                      (case session of SOME s => s
+                                     | _ => #thy_qualifier (!cfg)),
+                  file = SOME (Path.implode path),
+                  position_label = NONE,
+                  additional_libs = #additional_libs (!cfg),
+                  import_dir = SOME (Path.dir path),
+                  single_cmd_timeout = #single_cmd_timeout (!cfg),
+                  attributes = (case attrs of SOME a => a
+                                            | NONE => #attributes (!cfg)),
+                  base_dir = Path.dir path,
+                  can_write_thy = false }
+            end
+              
+              
           fun iteration () =
             let open MessagePackBinIO.Unpack
                 open MessagePackBinIO.Pack
@@ -345,12 +364,26 @@ fun startup base_dir_of_theories thy0 addr0 =
                       output cout packUnit () )
                  | "\005lex" => let
                            val src = read unpackString
+                           val (_, fix) = REPL_Aux.column_of_pos src
                            val rets = REPL.lex_commands (!cfg) src
+                                   |> map (apfst fix)
+                        in output cout (packList (packPair (pos_packer, packString))) rets
+                       end
+                 | "\005lex_file" => let
+                           val raw_path = read unpackString
+                           val path = Path.explode raw_path
+                           val src = File.read path
+                           val (_, fix) = REPL_Aux.column_of_pos src
+                           val cfg = target_thy_file path NONE
+                           val rets = REPL.lex_commands cfg src
+                                   |> map (apfst fix)
                         in output cout (packList (packPair (pos_packer, packString))) rets
                        end
                  | "\005lex'" => let
                            val src = read unpackString
+                           val (_, fix) = REPL_Aux.column_of_pos src
                            val rets = REPL.fast_lex src
+                                   |> map (apfst fix)
                         in output cout (packList (packPair (pos_packer, packString))) rets
                        end
                  | "\005plugin" => let
@@ -422,7 +455,9 @@ fun startup base_dir_of_theories thy0 addr0 =
                                             additional_libs = #additional_libs (!cfg),
                                             import_dir = #import_dir (!cfg),
                                             single_cmd_timeout = #single_cmd_timeout (!cfg),
-                                            attributes = #attributes (!cfg) }
+                                            attributes = #attributes (!cfg),
+                                            base_dir = #base_dir (!cfg),
+                                            can_write_thy = #can_write_thy (!cfg) }
                         in output cout packUnit ()
                        end
                  | "\005session-of" => let
@@ -464,16 +499,7 @@ fun startup base_dir_of_theories thy0 addr0 =
                                       unpackList unpackString
                                   ))
                            val path = Path.explode raw_path
-                           val session = REPL_Aux.parse_session_name path
-                           val cfg = { thy_qualifier =
-                                            (case session of SOME s => s
-                                                           | _ => #thy_qualifier (!cfg)),
-                                       file = SOME raw_path,
-                                       position_label = NONE,
-                                       additional_libs = #additional_libs (!cfg),
-                                       import_dir = SOME (Path.dir path),
-                                       single_cmd_timeout = #single_cmd_timeout (!cfg),
-                                       attributes = attrs }
+                           val cfg = target_thy_file path (SOME attrs)
                            val file = Path.implode (Path.expand path)
                            val (src, ofs) =
                                     case pos
@@ -502,7 +528,6 @@ fun startup base_dir_of_theories thy0 addr0 =
                                             end
                                       else ("init", src)
                            val errs = #errors (REPL.rollback_state_global cfg snapshot evaluation_cache_store)
-                           val _ = REPL.set_base_dir (Path.dir path)
                            val errs = if to_eval = ""
                                       then errs
                                       else case timeout
@@ -518,7 +543,6 @@ fun startup base_dir_of_theories thy0 addr0 =
                                                then raise Timeout.TIMEOUT time'
                                                else errs' @ errs
                                             end
-                           val _ = REPL.reset_base_dir ()
                         in if null errs andalso cache_the_position andalso is_some ofs
                            then let
                                 val name = "_" ^ string_of_int (evaluation_cache_counter ())
@@ -544,7 +568,9 @@ fun startup base_dir_of_theories thy0 addr0 =
                                        additional_libs = #additional_libs (!cfg),
                                        import_dir = Option.map Path.explode import_dir,
                                        single_cmd_timeout = Option.map Time.fromMilliseconds timeout_single_cmd,
-                                       attributes = #attributes (!cfg) }
+                                       attributes = #attributes (!cfg),
+                                       base_dir = #base_dir (!cfg),
+                                       can_write_thy = #can_write_thy (!cfg) }
                            val timeout = Option.map Time.fromMilliseconds timeout
                            val ret = case timeout
                                        of NONE   => REPL.RE cfg src
@@ -568,7 +594,9 @@ fun startup base_dir_of_theories thy0 addr0 =
                                     additional_libs = merge (op =) (#additional_libs (!cfg), libs),
                                     import_dir = #import_dir (!cfg),
                                     single_cmd_timeout = #single_cmd_timeout (!cfg),
-                                    attributes = #attributes (!cfg) }
+                                    attributes = #attributes (!cfg),
+                                    base_dir = #base_dir (!cfg),
+                                    can_write_thy = #can_write_thy (!cfg) }
                          ; output cout packUnit ()
                        end
                  | "\005numcpu" => let
@@ -584,7 +612,9 @@ fun startup base_dir_of_theories thy0 addr0 =
                                     additional_libs = #additional_libs (!cfg),
                                     import_dir = #import_dir (!cfg),
                                     single_cmd_timeout = time,
-                                    attributes = #attributes (!cfg) }
+                                    attributes = #attributes (!cfg),
+                                    base_dir = #base_dir (!cfg),
+                                    can_write_thy = #can_write_thy (!cfg) }
                          ; output cout packUnit ()
                        end
                  | "\005config" => let
@@ -600,7 +630,9 @@ fun startup base_dir_of_theories thy0 addr0 =
                                        additional_libs = [],
                                        import_dir = SOME (Path.explode master_dir),
                                        single_cmd_timeout = NONE,
-                                       attributes = [] }
+                                       attributes = [],
+                                       base_dir = #base_dir (!cfg),
+                                       can_write_thy = #can_write_thy (!cfg)}
                            val path = REPL.path_of_the_theory cfg name
                                    |> Path.expand
                         in output cout packString (Path.implode path)
@@ -641,7 +673,22 @@ fun startup base_dir_of_theories thy0 addr0 =
        in Isabelle_Thread.fork (  Isabelle_Thread.params "REPL-worker"
                                 |> Isabelle_Thread.interrupts )
                                (fn () =>
-            let val id = REPL.init_repler base_dir_of_theories thy0
+            let val id = REPL.init_repler thy0
+                val base_dir = Path.append base_dir_of_theories (Path.basic (string_of_int id))
+                val _ = if File.is_dir base_dir
+                        then ()
+                        else ( if File.exists base_dir then File.rm base_dir else ();
+                               OS.FileSys.mkDir (File.platform_path base_dir) )
+                val _ = cfg := {
+                          thy_qualifier = #thy_qualifier (!cfg),
+                          file = #file (!cfg),
+                          position_label = #position_label (!cfg),
+                          additional_libs = #additional_libs (!cfg),
+                          import_dir = #import_dir (!cfg),
+                          single_cmd_timeout = #single_cmd_timeout (!cfg),
+                          attributes = #attributes (!cfg),
+                          base_dir = base_dir,
+                          can_write_thy = true }
              in \<^try>\<open>
             let open MessagePackBinIO.Pack
              in Thread_Data.put sockets (SOME (cin, cout))

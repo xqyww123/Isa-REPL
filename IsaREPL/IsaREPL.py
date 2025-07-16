@@ -141,7 +141,7 @@ class Client:
     A client for connecting Isabelle REPL
     """
 
-    VERSION = '0.11.0'
+    VERSION = '0.12.0'
 
     def __init__(self, addr, thy_qualifier, timeout=3600):
         """
@@ -316,7 +316,17 @@ class Client:
         self.cout.flush()
         ret = Client._parse_control_(self.unpack.unpack())
         ret = [(__unpack_position__(pos), src) for pos, src in ret]
-        __repair_positions__(ret)
+        #__repair_positions__(ret)
+        return ret
+
+    def lex_file(self, file):
+        if not isinstance(file, str):
+            raise ValueError("the argument file must be a string")
+        mp.pack("\x05lex_file", self.cout)
+        mp.pack(os.path.abspath(file), self.cout)
+        self.cout.flush()
+        ret = Client._parse_control_(self.unpack.unpack())
+        ret = [(__unpack_position__(pos), src) for pos, src in ret]
         return ret
 
     def fast_lex(self, source):
@@ -334,7 +344,7 @@ class Client:
         self.cout.flush()
         ret = Client._parse_control_(self.unpack.unpack())
         ret = [(__unpack_position__(pos), src) for pos, src in ret]
-        __repair_positions__(ret)
+        #__repair_positions__(ret)
         return ret
 
     def plugin(self, name, ML, thy='Isa_REPL.Isa_REPL'):

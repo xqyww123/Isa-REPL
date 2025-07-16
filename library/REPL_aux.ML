@@ -11,6 +11,8 @@ val session_theory_infos :
 
 val parse_thy_header : Path.T -> Thy_Header.header list
 
+val column_of_pos : string -> (Position.T -> int * int) * (Position.T -> Position.T)
+
 end
 
 structure REPL_Aux : REPL_AUX = struct
@@ -298,6 +300,40 @@ val session_theory_infos = Lazy.lazy (fn () => (
      in mk_session_info components
     end
   ))
+
+
+fun column_of_pos src =
+  let val ofs  = Unsynchronized.ref 1
+      val line = Unsynchronized.ref 1
+      val colm = Unsynchronized.ref 1
+      val src = Symbol_Pos.explode (src, Position.none)
+             |> Vector.fromList
+             |> Vector.map fst
+      fun calc offset = (
+          if offset < !ofs then (ofs := 1; line := 1; colm := 0) else ()
+        ; while !ofs < offset do
+            if Vector.sub (src, !ofs) = "\n"
+            then (line := !line + 1; ofs := !ofs + 1; colm := 0)
+            else (ofs := !ofs + 1; colm := !colm + 1)
+        )
+      fun of_pos pos =
+        let val _ = calc (the (Position.offset_of pos))
+            val c0 = !colm
+         in case Position.end_offset_of pos
+              of SOME x1 => (
+                    calc x1
+                  ; (c0, !colm) )
+               | NONE => (c0, ~1)
+        end
+      fun translate_pos pos =
+        let val (c0, c1) = of_pos pos
+         in Position.make0 (the (Position.line_of pos)) c0 c1
+                           (the_default "" (Position.label_of pos))
+                           (the_default "" (Position.file_of pos))
+                           (the_default "" (Position.id_of pos))
+        end
+   in (of_pos, translate_pos)
+  end 
 
 
 end

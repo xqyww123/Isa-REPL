@@ -9,7 +9,9 @@ type cfg = { thy_qualifier : string,
              additional_libs : string list,
              import_dir : Path.T option,
              single_cmd_timeout: Time.time option,
-             attributes : string list }
+             attributes : string list,
+             base_dir: Path.T,
+             can_write_thy: bool }
 
 type collector = cfg
               -> {current_command: Command_Span.span,
@@ -48,8 +50,7 @@ exception REPL_fail of string
 
 type Session_ID = int
    (*initialize the current thread as a repl worker*)
-val init_repler : Path.T (*base_dir used to store outputs*)
-               -> theory option (*Initial theory*) -> Session_ID
+val init_repler : theory option (*Initial theory*) -> Session_ID
 val RE : cfg -> string -> command_outputs
 val declare : string list (*attributes*) -> unit
 val lex_commands : cfg -> string -> (Position.T * string) list
@@ -133,13 +134,6 @@ val add_global_theories : string * theory -> unit
 val split_thy_headers : Symbol_Pos.T list -> Symbol_Pos.T list list
 val pure_keywords : Keyword.keywords
 
-(* Set base_dir *)
-(*TODO: move this to cfg*)
-
-val get_base_dir : unit -> Path.T
-val set_base_dir : Path.T -> unit
-val reset_base_dir : unit -> unit
-
 end
 
 structure REPL : REPL = struct
@@ -171,7 +165,9 @@ type cfg = { thy_qualifier : string,
              additional_libs : string list,
              import_dir : Path.T option,
              single_cmd_timeout: Time.time option,
-             attributes : string list }
+             attributes : string list,
+             base_dir: Path.T,
+             can_write_thy: bool }
 
 type collector = cfg
               -> {current_command: Command_Span.span,
@@ -224,7 +220,7 @@ val remove_plugin : (string -> plugins -> plugins) = AList.delete (op =)
 (** Worker ID **)
 
 type Session_ID = int
-val Session_ID = Thread_Data.var () : (Session_ID * Path.T * Path.T * plugins) Thread_Data.var
+val Session_ID = Thread_Data.var () : (Session_ID * plugins) Thread_Data.var
 
 fun the_current_worker_ID () = Option.map #1 (Thread_Data.get Session_ID)
 
@@ -241,13 +237,13 @@ fun get_and_clean_message' wid =
 
 fun get_and_clean_message () =
   case Thread_Data.get Session_ID
-    of SOME (id, _, _, _) => get_and_clean_message' id
+    of SOME (id, _) => get_and_clean_message' id
      | NONE => []
 
 fun init_printers () =
   let fun output_fn typ fallback = (fn ms =>
             case Thread_Data.get Session_ID
-              of SOME (id, _, _, _) =>
+              of SOME (id, _) =>
                     Synchronized.change message_buffer
                         (Inttab.map_entry id (fn L => (typ, trim_makrup (implode ms)) :: L))
                | NONE => fallback ms )
@@ -363,7 +359,7 @@ fun add_evaluated_theories entry =
 fun add_global_theories entry =
   Synchronized.change global_theories (Symtab.update entry)
 
-fun init_thy ignore_imports (base_dir, {thy_qualifier, additional_libs, import_dir, attributes,...}) source =
+fun init_thy ignore_imports {thy_qualifier, base_dir, additional_libs, import_dir, attributes,...} source =
   let val toks = Token.tokenize pure_keywords {strict = false} source
       val i = find_index is_theory_tok toks
    in if i = ~1
@@ -455,12 +451,11 @@ fun lex_split drop_first drop_if_no_meet kws ATTACH P source =
 
 val split_thy_headers = lex_split false false pure_keywords Token.is_command_modifier is_theory_tok
 
-fun parse_text (base_dir, origin_base_dir, (cfg:cfg)) register_theory' state source =
-  let val write_thy = register_theory' andalso
-                      Path.expand origin_base_dir = Path.expand base_dir
-      val thy = get_thy write_thy (base_dir,cfg) state source
+fun parse_text (cfg:cfg) register_theory' state source =
+  let val write_thy = register_theory' andalso #can_write_thy cfg
+      val thy = get_thy write_thy cfg state source
    in if write_thy andalso not (pointer_eq (Pure, thy))
-         andalso Path.expand (Resources.master_directory thy) = Path.expand base_dir
+         andalso Path.expand (Resources.master_directory thy) = Path.expand (#base_dir cfg)
     then File.append (Path.append (Resources.master_directory thy)
                                   (Path.explode (Context.theory_name {long=false} thy ^ ".thy")))
                      (Symbol_Pos.content source)
@@ -510,7 +505,7 @@ fun RE (cfg:cfg) source : command_outputs =
      | SOME (s0,cnt,(trace, register_theory'),H) =>
   case Thread_Data.get Session_ID
     of NONE                => {outputs=NONE, error=SOME "INTERNAL ERROR: worker ID lost"}
-     | SOME (wid, base_dir, origin_base_dir, plugins) =>
+     | SOME (wid, plugins) =>
   let val pos = Position.make {
                   line=1, offset=1, end_offset=1,
                   props= { label = the_default "" (#position_label cfg),
@@ -545,7 +540,7 @@ fun RE (cfg:cfg) source : command_outputs =
 
       fun loop ret _ [] [] s = (mk_command_outputs ret NONE, s)
         | loop ret errs [] (src::srcs) s =
-            loop ret errs (parse_text (base_dir, origin_base_dir, cfg) register_theory' s src) srcs s
+            loop ret errs (parse_text cfg register_theory' s src) srcs s
         | loop ret errs ((tr,current_cmd)::trs) srcs s =
             case (case #single_cmd_timeout cfg
                     of NONE => Toplevel.command_errors false tr s
@@ -594,14 +589,9 @@ fun RE (cfg:cfg) source : command_outputs =
 
 val ID_counter = Counter.make ()
 
-fun init_repler base_base thy =
+fun init_repler thy =
   let val id = ID_counter ()
-      val base_dir = Path.append base_base (Path.basic (string_of_int id))
-      val _ = if File.is_dir base_dir
-              then ()
-              else ( if File.exists base_dir then File.rm base_dir else ();
-                     OS.FileSys.mkDir (File.platform_path base_dir) )
-   in Thread_Data.put Session_ID (SOME (id, base_dir, base_dir, []))
+   in Thread_Data.put Session_ID (SOME (id, []))
     ; Synchronized.change message_buffer (Inttab.update_new (id, []))
     ; Thread_Data.put state (SOME (Toplevel.make_state thy, 0, (true, true), []))
     ; id
@@ -647,7 +637,7 @@ fun split_commands cfg wid state source =
 fun lex_commands cfg source =
   case Thread_Data.get Session_ID
     of NONE         => raise REPL_fail "INTERNAL ERROR: worker ID lost"
-     | SOME (_,base_dir,_,_) =>
+     | SOME (_,_) =>
   case Thread_Data.get state
     of NONE              => raise REPL_fail  "INTERNAL ERROR: state lost"
      | SOME (s0,cnt,_,_) =>
@@ -655,9 +645,12 @@ fun lex_commands cfg source =
                   line=1, offset=1, end_offset=1, props={label="", file="#REPL", id=""}}
       fun parse [] = []
         | parse (src::srcs) =
-        let val thy = case init_thy true (base_dir, cfg) src
+        let val thy = case init_thy false cfg src
                         of SOME thy => thy
-                         | NONE => the_default Pure (try Toplevel.theory_of s0)
+                         | NONE =>
+                            if null srcs
+                            then raise REPL_fail ("fail to load the theory " ^ Path.implode (#base_dir cfg))
+                            else the_default Pure (try Toplevel.theory_of s0)
             val kws = Thy_Header.get_keywords thy
             val ret = lex_split true true kws Token.is_command_modifier (Token.is_kind Token.Command) src
 
@@ -698,20 +691,20 @@ fun fast_lex source =
 fun check_plugin name =
   case Thread_Data.get Session_ID
     of NONE               => raise REPL_fail "INTERNAL ERROR: worker ID lost"
-     | SOME (_, _, _, plugins) =>
+     | SOME (_, plugins) =>
         AList.lookup (op =) plugins name
 
 fun register_plugin plugin =
   case Thread_Data.get Session_ID
     of NONE               => raise REPL_fail "INTERNAL ERROR: worker ID lost"
-     | SOME (wid, base, origin_base, plugins) =>
-        Thread_Data.put Session_ID (SOME (wid, base, origin_base, add_plugin plugin plugins))
+     | SOME (wid, plugins) =>
+        Thread_Data.put Session_ID (SOME (wid, add_plugin plugin plugins))
 
 fun delete_plugin name =
   case Thread_Data.get Session_ID
     of NONE               => raise REPL_fail "INTERNAL ERROR: worker ID lost"
-     | SOME (wid, base, origin_base, plugins) =>
-        Thread_Data.put Session_ID (SOME (wid, base, origin_base, remove_plugin name plugins))
+     | SOME (wid, plugins) =>
+        Thread_Data.put Session_ID (SOME (wid, remove_plugin name plugins))
 
 (** State Rollback II **)
 
@@ -743,7 +736,7 @@ fun clean_state () =
 fun rollback_state cfg name =
   case Thread_Data.get Session_ID
     of NONE                => raise REPL_fail  "INTERNAL ERROR: state lost"
-     | SOME (wid, _, _, plugins) =>
+     | SOME (wid, plugins) =>
   case Thread_Data.get state
     of NONE             => raise REPL_fail  "INTERNAL ERROR: state lost"
      | SOME (_,cnt,t,H) =>
@@ -762,7 +755,7 @@ fun rollback_state cfg name =
 fun rollback_state_global cfg name store =
   case Thread_Data.get Session_ID
     of NONE                => raise REPL_fail  "INTERNAL ERROR: state lost"
-     | SOME (wid, _, _, plugins) =>
+     | SOME (wid, plugins) =>
   case Thread_Data.get state
     of NONE             => raise REPL_fail  "INTERNAL ERROR: state lost"
      | SOME (_,cnt,t,H) =>
@@ -788,7 +781,7 @@ fun list_states () =
 fun list_states' cfg () =
   case Thread_Data.get Session_ID
     of NONE                => raise REPL_fail  "INTERNAL ERROR: state lost"
-     | SOME (wid, _, _, plugins) =>
+     | SOME (wid, plugins) =>
   case Thread_Data.get state
     of NONE           => raise REPL_fail  "INTERNAL ERROR: state lost"
      | SOME (_,_,_,H) => map (apsnd (fn s' =>
@@ -898,25 +891,6 @@ fun get_ctxt () =
   case try Toplevel.context_of s
     of SOME ctxt => ctxt
      | NONE => raise REPL_fail "Not in a proof context." )
-
-(** set base_dir **)
-
-fun get_base_dir () =
-  case Thread_Data.get Session_ID
-    of NONE              => raise REPL_fail  "INTERNAL ERROR: state lost"
-     | SOME (_,base,_,_) => base
-
-fun set_base_dir base' =
-  case Thread_Data.get Session_ID
-    of NONE              => raise REPL_fail  "INTERNAL ERROR: state lost"
-     | SOME (wid, _, origin_base, H) =>
-       Thread_Data.put Session_ID (SOME (wid, base', origin_base, H))
-
-fun reset_base_dir () =
-  case Thread_Data.get Session_ID
-    of NONE              => raise REPL_fail  "INTERNAL ERROR: state lost"
-     | SOME (wid, _, origin_base, H) =>
-       Thread_Data.put Session_ID (SOME (wid, origin_base, origin_base, H))
 
 (** Auxiliary **)
 
