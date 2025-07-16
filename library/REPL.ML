@@ -11,7 +11,7 @@ type cfg = { thy_qualifier : string,
              single_cmd_timeout: Time.time option,
              attributes : string list,
              base_dir: Path.T,
-             can_write_thy: bool }
+             write_thy: bool }
 
 type collector = cfg
               -> {current_command: Command_Span.span,
@@ -167,7 +167,7 @@ type cfg = { thy_qualifier : string,
              single_cmd_timeout: Time.time option,
              attributes : string list,
              base_dir: Path.T,
-             can_write_thy: bool }
+             write_thy: bool }
 
 type collector = cfg
               -> {current_command: Command_Span.span,
@@ -452,7 +452,7 @@ fun lex_split drop_first drop_if_no_meet kws ATTACH P source =
 val split_thy_headers = lex_split false false pure_keywords Token.is_command_modifier is_theory_tok
 
 fun parse_text (cfg:cfg) register_theory' state source =
-  let val write_thy = register_theory' andalso #can_write_thy cfg
+  let val write_thy = register_theory' andalso #write_thy cfg
       val thy = get_thy write_thy cfg state source
    in if write_thy andalso not (pointer_eq (Pure, thy))
          andalso Path.expand (Resources.master_directory thy) = Path.expand (#base_dir cfg)

@@ -324,7 +324,7 @@ fun startup base_dir_of_theories thy0 addr0 =
                                    single_cmd_timeout = NONE,
                                    attributes = [],
                                    base_dir = Path.root,
-                                   can_write_thy = true }
+                                   write_thy = true }
           fun target_thy_file path attrs =
             let val session = REPL_Aux.parse_session_name path
              in { thy_qualifier =
@@ -338,7 +338,7 @@ fun startup base_dir_of_theories thy0 addr0 =
                   attributes = (case attrs of SOME a => a
                                             | NONE => #attributes (!cfg)),
                   base_dir = Path.dir path,
-                  can_write_thy = false }
+                  write_thy = false }
             end
               
               
@@ -457,7 +457,7 @@ fun startup base_dir_of_theories thy0 addr0 =
                                             single_cmd_timeout = #single_cmd_timeout (!cfg),
                                             attributes = #attributes (!cfg),
                                             base_dir = #base_dir (!cfg),
-                                            can_write_thy = #can_write_thy (!cfg) }
+                                            write_thy = #write_thy (!cfg) }
                         in output cout packUnit ()
                        end
                  | "\005session-of" => let
@@ -570,7 +570,7 @@ fun startup base_dir_of_theories thy0 addr0 =
                                        single_cmd_timeout = Option.map Time.fromMilliseconds timeout_single_cmd,
                                        attributes = #attributes (!cfg),
                                        base_dir = #base_dir (!cfg),
-                                       can_write_thy = #can_write_thy (!cfg) }
+                                       write_thy = #write_thy (!cfg) }
                            val timeout = Option.map Time.fromMilliseconds timeout
                            val ret = case timeout
                                        of NONE   => REPL.RE cfg src
@@ -596,7 +596,7 @@ fun startup base_dir_of_theories thy0 addr0 =
                                     single_cmd_timeout = #single_cmd_timeout (!cfg),
                                     attributes = #attributes (!cfg),
                                     base_dir = #base_dir (!cfg),
-                                    can_write_thy = #can_write_thy (!cfg) }
+                                    write_thy = #write_thy (!cfg) }
                          ; output cout packUnit ()
                        end
                  | "\005numcpu" => let
@@ -614,7 +614,7 @@ fun startup base_dir_of_theories thy0 addr0 =
                                     single_cmd_timeout = time,
                                     attributes = #attributes (!cfg),
                                     base_dir = #base_dir (!cfg),
-                                    can_write_thy = #can_write_thy (!cfg) }
+                                    write_thy = #write_thy (!cfg) }
                          ; output cout packUnit ()
                        end
                  | "\005config" => let
@@ -632,7 +632,7 @@ fun startup base_dir_of_theories thy0 addr0 =
                                        single_cmd_timeout = NONE,
                                        attributes = [],
                                        base_dir = #base_dir (!cfg),
-                                       can_write_thy = #can_write_thy (!cfg)}
+                                       write_thy = #write_thy (!cfg)}
                            val path = REPL.path_of_the_theory cfg name
                                    |> Path.expand
                         in output cout packString (Path.implode path)
@@ -688,7 +688,7 @@ fun startup base_dir_of_theories thy0 addr0 =
                           single_cmd_timeout = #single_cmd_timeout (!cfg),
                           attributes = #attributes (!cfg),
                           base_dir = base_dir,
-                          can_write_thy = true }
+                          write_thy = true }
              in \<^try>\<open>
             let open MessagePackBinIO.Pack
              in Thread_Data.put sockets (SOME (cin, cout))
