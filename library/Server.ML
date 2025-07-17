@@ -674,6 +674,12 @@ fun startup base_dir_of_theories thy0 addr0 =
                                                 o apfst fst )) ret []
                         in output cout (packPairList (packString, pp o Thm.prop_of)) ret
                        end
+                  | "\005clean_cache" => let
+                        in Synchronized.change evaluation_cache (fn _ => (
+                              Synchronized.change evaluation_cache_store (K Symtab.empty)
+                            ; Symtab.empty ))
+                         ; output cout packUnit ()
+                       end
                 end handle REPL.REPL_fail E =>
                        output_err cout E
               else let

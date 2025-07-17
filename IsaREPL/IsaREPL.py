@@ -94,9 +94,29 @@ class Position:
         return (self.line == other.line and 
                 self.column == other.column and 
                 self.file == other.file)
-    
+
     def __hash__(self):
         return hash((self.line, self.column, self.file))
+
+    def __lt__(self, other):
+        if not isinstance(other, Position):
+            return NotImplemented
+        return (self.file, self.line, self.column) < (other.file, other.line, other.column)
+
+    def __le__(self, other):
+        if not isinstance(other, Position):
+            return NotImplemented
+        return (self.file, self.line, self.column) <= (other.file, other.line, other.column)
+
+    def __gt__(self, other):
+        if not isinstance(other, Position):
+            return NotImplemented
+        return (self.file, self.line, self.column) > (other.file, other.line, other.column)
+
+    def __ge__(self, other):
+        if not isinstance(other, Position):
+            return NotImplemented
+        return (self.file, self.line, self.column) >= (other.file, other.line, other.column)
 
     @staticmethod
     def from_s(position_str):
@@ -784,6 +804,14 @@ class Client:
             raise REPLFail('\n'.join(errs))
         return None
 
+    def clean_cache(self):
+        """
+        Clean the evaluation cache recorded by the `file` method.
+        """
+        mp.pack("\x05clean_cache", self.cout)
+        self.cout.flush()
+        return Client._parse_control_(self.unpack.unpack())
+
     def add_lib(self, libs):
         """
         Add additional `libs` that will be loaded whenever evaluating a theory.
@@ -910,4 +938,4 @@ class Client:
         mp.pack((number, methods, params, printer), self.cout)
         self.cout.flush()
         return Client._parse_control_(self.unpack.unpack())
-        
+
