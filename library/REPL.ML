@@ -136,8 +136,6 @@ val add_global_theories : string * theory -> unit
 
 val split_thy_headers : Symbol_Pos.T list -> Symbol_Pos.T list list
 val pure_keywords : Keyword.keywords
-(*DEBUG*)
-val global_theories : theory Symtab.table Synchronized.var
 
 end
 
