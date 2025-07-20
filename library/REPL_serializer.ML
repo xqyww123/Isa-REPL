@@ -6,17 +6,23 @@ val flags_packer          : REPL.flags MessagePackBinIO.Pack.packer
 val command_output_packer : REPL.command_output MessagePackBinIO.Pack.packer
 val command_outputs_packer: REPL.command_outputs MessagePackBinIO.Pack.packer
 
+type pp_name = string
+
 val term_string : Context.generic -> term MessagePackBinIO.Pack.packer
 val s_expression : term -> string
 val s_expression_packer : term MessagePackBinIO.Pack.packer
-val pack_context : bool -> Context.generic -> REPL.context MessagePackBinIO.Pack.packer
+val pack_context : pp_name -> Context.generic -> REPL.context MessagePackBinIO.Pack.packer
 val s_expr_typ : typ -> string list -> string list
-val pp_of : Context.generic -> string -> term MessagePackBinIO.Pack.packer
+
+val term_packer : pp_name -> Context.generic -> term MessagePackBinIO.Pack.packer
+val typ_packer  : pp_name -> Context.generic -> typ  MessagePackBinIO.Pack.packer
 
 end
 
 structure REPL_Serialize : REPL_SERIALIZE = struct
 open REPL
+
+type pp_name = string
 
 local open MessagePackBinIO.Pack in
 
@@ -114,29 +120,47 @@ and out_args ret bvs ctxt args = fold_rev (fn x => fn ret => (" " :: s_expr ret 
 fun s_expression term = String.concat (s_expr [] [] Name.context term)
 val s_expression_packer = packString o s_expression
 
-fun term_packer s_expr ctxt =
-      if s_expr then s_expression_packer else term_string ctxt
+fun term_packer "sexpr" _ = s_expression_packer
+  | term_packer "pretty" ctxt = term_string ctxt
+  | term_packer "typed-nv_pretty" ctxt =
+      let val ctxt = Config.put_generic Printer.show_types true ctxt
+                  |> Config.put_generic Printer.show_types_nv true
+       in term_string ctxt
+      end
+  | term_packer "typed_pretty" ctxt =
+      let val ctxt = Config.put_generic Printer.show_types true ctxt
+       in term_string ctxt
+      end
+  | term_packer name _ =
+      raise REPL_fail ("Unknown term printer " ^ name
+              ^ ". Unknown printers: ['sexpr', 'pretty', 'typed_pretty']")
+  
 fun pretty_typ ctxt =
       packString o REPL.trim_makrup o Context.cases Syntax.string_of_typ_global Syntax.string_of_typ ctxt
-fun typ_packer s_expr ctxt typ =
-      if s_expr
-      then packString (String.concat (s_expr_typ typ []))
-      else pretty_typ ctxt typ
+
+fun typ_packer "sexpr" _ = (fn typ => packString (String.concat (s_expr_typ typ [])))
+  | typ_packer "pretty" ctxt = pretty_typ ctxt
+  | typ_packer "typed_pretty" ctxt = pretty_typ ctxt
+  | typ_packer "typed-nv_pretty" ctxt = pretty_typ ctxt
+  | typ_packer name _ =
+      raise REPL_fail ("Unknown term printer " ^ name ^ ". Unknown printers: ['sexpr', 'pretty']")
+
 fun thm_packer s_expr ctxt = term_packer s_expr ctxt o Thm.prop_of
 
 
 
-fun pack_context s_expr ctxt ({
-  local_facts: (string * thm list) list,
-  assumptions: thm list,
-  bindings   : (typ * term) Vartab.table (*bindings introduced by `let ?x = <...>`*),
-  fixed_terms: typ Vartab.table * sort Vartab.table,
-  goals      : cterm list
-} : context) =
+fun pack_context s_expr ctxt =
   let val thm = thm_packer s_expr ctxt
       val typ = typ_packer s_expr ctxt
       val term= term_packer s_expr ctxt
-   in packTuple5 (
+   in fn ({
+        local_facts: (string * thm list) list,
+        assumptions: thm list,
+        bindings   : (typ * term) Vartab.table (*bindings introduced by `let ?x = <...>`*),
+        fixed_terms: typ Vartab.table * sort Vartab.table,
+        goals      : cterm list
+      } : context) =>
+    packTuple5 (
         packPairList (packString, packList thm),
         packList thm,
         packPairList (pack_var, packPair (typ, term)) o Vartab.dest,
@@ -151,10 +175,5 @@ fun pack_context s_expr ctxt ({
 
 end
 
-fun pp_of _ "sexpr" = s_expression_packer
-  | pp_of ctxt "pretty" = term_string ctxt
-  | pp_of _ name =
-      raise REPL_fail ("Unknown term printer " ^ name ^ ". Unknown printers: ['sexpr', 'pretty']")
-  
 
 end

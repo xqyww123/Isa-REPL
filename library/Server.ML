@@ -265,7 +265,7 @@ fun startup base_dir_of_theories thy0 addr0 =
 
           val (version, cin) = MessagePackBinIO.Unpack.doUnpack
                                           (MessagePackBinIO.Unpack.unpackString) cin
-          val _ = if version = "0.12.0" then ()
+          val _ = if version = "0.12.1" then ()
                   else if version = "heartbeat"
                   then \<^try>\<open> (
                        output cout MessagePackBinIO.Pack.packUnit ()
@@ -441,10 +441,11 @@ fun startup base_dir_of_theories thy0 addr0 =
                         in output cout packString proof
                        end
                  | "\005context" => let
-                           val s_expr = read unpackBool
+                           val pp = read unpackString
                            val ctxt = REPL.get_ctxt ()
+                           val pp = REPL_Serialize.pack_context pp (Context.Proof ctxt)
                            val state = REPL.get_context ()
-                        in output cout (REPL_Serialize.pack_context s_expr (Context.Proof ctxt)) state
+                        in output cout pp state
                        end
                  | "\005qualifier" => let
                            val qualifier = read unpackString
@@ -668,7 +669,7 @@ fun startup base_dir_of_theories thy0 addr0 =
                                         else NONE )
 
                            val ctxt = Toplevel.context_of ts
-                           val pp = REPL_Serialize.pp_of (Context.Proof ctxt) pp
+                           val pp = REPL_Serialize.term_packer pp (Context.Proof ctxt)
 
                            val ret = fold (fold ( insert (op = o apply2 fst)
                                                 o apfst fst )) ret []
@@ -680,6 +681,7 @@ fun startup base_dir_of_theories thy0 addr0 =
                             ; Symtab.empty ))
                          ; output cout packUnit ()
                        end
+                  | other => raise REPL.REPL_fail ("Unknown REPL command" ^ other)
                 end handle REPL.REPL_fail E =>
                        output_err cout E
               else let

@@ -170,7 +170,7 @@ class Client:
     A client for connecting Isabelle REPL
     """
 
-    VERSION = '0.12.0'
+    VERSION = '0.12.1'
 
     def __init__(self, addr, thy_qualifier, timeout=3600):
         """
@@ -629,19 +629,29 @@ class Client:
         self.cout.flush()
         return Client._parse_control_(self.unpack.unpack())
 
-    def context(self, s_expr):
+    def context(self, pp='pretty'):
         """
-        Returns helpful contextual data including
-            local facts, assumptions, bindings (made by `let` command), fixed term variables (and their types),
-            fixed type variables (and their sorts), and goals.
+        @return:
+        A tuple of (
+            local_facts: dict[str, thm],
+            assumptions: [thm],
+            binding: dict[str, (typ, term)], where the key is the name of the binding,
+                note, a binding is something that appears like `?x` in Isabelle, e.g., let ?binding = 123.
+            (fixed term variabls, fixed type variables): (dict[str, typ], dict[str, sort]),
+            goals: [term]
+        )
+        where thm := str, in the encoding indicated by the pretty printer `pp`
+            typ := str, in the encoding indicated by the pretty printer `pp`
+            sort := [str]
+
         This retrival doesn't change the state of REPL.
 
         The formatter of S expression is given in ../library/REPL_serializer.ML:s_expr.
         """
-        if not isinstance(s_expr, bool):
-            raise ValueError("the argument s_expr must be a boolean")
+        if not isinstance(pp, str):
+            raise ValueError("the argument pp must be a string")
         mp.pack("\x05context", self.cout)
-        mp.pack(s_expr, self.cout)
+        mp.pack(pp, self.cout)
         self.cout.flush()
         return Client._parse_control_(self.unpack.unpack())
 

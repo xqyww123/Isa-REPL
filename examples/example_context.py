@@ -42,6 +42,6 @@ subgoal premises prems proof
   have lem: "1 + 1 = (2::nat)" by auto
 """)
 
-pp(c.silly_context(False))
+pp(c.silly_context('typed_pretty'))
 c.close ()
 
