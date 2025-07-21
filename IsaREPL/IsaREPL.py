@@ -76,6 +76,14 @@ def get_SYMBOLS():
 def get_REVERSE_SYMBOLS():
     return get_SYMBOLS_AND_REVERSED()[1]
 
+SUBSUP_TRANS_TABLE = {
+    "⇩0": "₀", "⇩1": "₁", "⇩2": "₂", "⇩3": "₃", "⇩4": "₄",
+    "⇩5": "₅", "⇩6": "₆", "⇩7": "₇", "⇩8": "₈", "⇩9": "₉",
+    "⇧0": "⁰", "⇧1": "¹", "⇧2": "²", "⇧3": "³", "⇧4": "⁴",
+    "⇧5": "⁵", "⇧6": "⁶", "⇧7": "⁷", "⇧8": "⁸", "⇧9": "⁹",
+    "⇩-": "₋", "⇧-": "⁻", "⇩+": "₊", "⇧+": "⁺", "⇩=": "₌", "⇧=": "⁼",
+    "⇩(": "₍", "⇧(": "⁽", "⇩)": "₎", "⇧)": "⁾",
+}
 
 class Position:
     def __init__(self, line, column, file):
@@ -865,14 +873,19 @@ class Client:
         # map every substring `s` in src to SYMBOLS[s] if s in SYMBOLS, otherwise s
         # Use a regular expression to find all potential Isabelle symbols
         pattern = r'\\<[^>]+>'
+        subscript_pattern = r'⇩.|⇧.'
         
         # Function to replace each match with its Unicode equivalent if available
         def replace_symbol(match):
             symbol = match.group(0)
             return get_SYMBOLS().get(symbol, symbol)
         
+        def replace_subsupscript(match):
+            symbol = match.group(0)
+            return SUBSUP_TRANS_TABLE.get(symbol, symbol)
+        
         # Use re.sub to efficiently perform all replacements at once
-        return re.sub(pattern, replace_symbol, src)
+        return re.sub(subscript_pattern, replace_subsupscript, re.sub(pattern, replace_symbol, src))
 
     @staticmethod
     def ascii_of_unicode(src):
