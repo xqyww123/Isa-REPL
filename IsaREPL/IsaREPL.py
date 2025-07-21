@@ -56,10 +56,11 @@ def _load_symbols(path, symbols={}, reverse_symbols={}):
                     continue
     return symbols, reverse_symbols
 
-SYMBOLS_CACHE = ({}, {})
+SYMBOLS_CACHE = None
 
 def get_SYMBOLS_AND_REVERSED():
-    if SYMBOLS_CACHE:
+    global SYMBOLS_CACHE
+    if SYMBOLS_CACHE is not None:
         return SYMBOLS_CACHE
     isabelle_home = os.popen("isabelle getenv -b ISABELLE_HOME").read().strip()
     isabelle_home_user = os.popen("isabelle getenv -b ISABELLE_HOME_USER").read().strip()
