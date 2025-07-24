@@ -265,7 +265,7 @@ fun startup base_dir_of_theories thy0 addr0 =
 
           val (version, cin) = MessagePackBinIO.Unpack.doUnpack
                                           (MessagePackBinIO.Unpack.unpackString) cin
-          val _ = if version = "0.12.1" then ()
+          val _ = if version = "0.12.2" then ()
                   else if version = "heartbeat"
                   then \<^try>\<open> (
                        output cout MessagePackBinIO.Pack.packUnit ()
@@ -295,7 +295,7 @@ fun startup base_dir_of_theories thy0 addr0 =
                      ; raise CONTINUE )\<close>
                   else (
                     output_err cout "The server is connected with a wrong version of the client.\n\
-                             \Please run `pip install \"IsaREPL==0.12.0\" --force-reinstall` to update your client."
+                             \Please run `pip install \"IsaREPL==0.12.2\" --force-reinstall` to update your client."
                   ; BinIO.StreamIO.flushOut cout
                   ; BinIO.StreamIO.closeOut cout
                   ; BinIO.StreamIO.closeIn  cin
@@ -655,25 +655,52 @@ fun startup base_dir_of_theories thy0 addr0 =
                         in output cout packer h
                        end
                   | "\005premise_selection" => let
-                           val (num, methods, params, pp) = read (unpackTuple4
+                           val (num, methods, params, pp, mode) = read (unpackTuple5
                                       (unpackInt,
                                        unpackList unpackString,
                                        unpackPairList (unpackString, unpackString),
-                                       unpackString))
+                                       unpackString,
+                                       unpackString ))
                            val ts = REPL.get_toplevel_state ()
                            val params = Sledgehammer_Commands.default_params @{theory} params
-                           val ret = REPL.premise_selection params Sledgehammer_Fact.no_fact_override num
+
+                           val ctxt = Toplevel.context_of ts
+                           val pp = REPL_Serialize.term_packer pp (Context.Proof ctxt)
+                        in case mode
+                             of "final" => let
+                           val ret = REPL.premise_selection_ultimate_goal params Sledgehammer_Fact.no_fact_override num
+                                  |> map_filter (fn (x, facts) =>
+                                        if member (op =) methods x
+                                        then SOME facts
+                                        else NONE )
+                           val ret = fold (fold ( insert (op = o apply2 fst)
+                                                o apfst fst )) ret []
+                           in output cout (packPairList (packString, pp o Thm.prop_of)) ret
+                          end
+                             | "each" => let
+                           val ret = REPL.premise_selection_each_goal params Sledgehammer_Fact.no_fact_override num
+                                  |> map (map_filter (fn (x, facts) =>
+                                        if member (op =) methods x
+                                        then SOME facts
+                                        else NONE ))
+
+                           val ret = map (fn ret =>
+                                        fold (fold ( insert (op = o apply2 fst)
+                                                   o apfst fst )) ret []) ret
+                        in output cout (packList (packPairList (packString, pp o Thm.prop_of))) ret
+                       end
+                             | "leading" => let
+                           val ret = REPL.premise_selection_leading_goal params Sledgehammer_Fact.no_fact_override num
                                   |> map_filter (fn (x, facts) =>
                                         if member (op =) methods x
                                         then SOME facts
                                         else NONE )
 
-                           val ctxt = Toplevel.context_of ts
-                           val pp = REPL_Serialize.term_packer pp (Context.Proof ctxt)
-
                            val ret = fold (fold ( insert (op = o apply2 fst)
                                                 o apfst fst )) ret []
                         in output cout (packPairList (packString, pp o Thm.prop_of)) ret
+                       end
+                             | _ => raise REPL.REPL_fail "bad argument 'mode'"
                        end
                   | "\005clean_cache" => let
                         in Synchronized.change evaluation_cache (fn _ => (

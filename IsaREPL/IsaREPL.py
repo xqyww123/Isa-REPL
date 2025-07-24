@@ -170,7 +170,7 @@ class Client:
     A client for connecting Isabelle REPL
     """
 
-    VERSION = '0.12.1'
+    VERSION = '0.12.2'
 
     def __init__(self, addr, thy_qualifier, timeout=3600):
         """
@@ -940,7 +940,7 @@ class Client:
         self.cout.flush()
         return Client._parse_control_(self.unpack.unpack())
     
-    def premise_selection(self, number : int, methods : list[str], params : dict[str, str] = {}, printer : str='pretty'):
+    def premise_selection(self, mode, number : int, methods : list[str], params : dict[str, str] = {}, printer : str='pretty'):
         """
         Conduct the premise selection provided by Sledgehammer.
         @param number: the number of relevant premises to return
@@ -948,7 +948,16 @@ class Client:
         @param params: the parameters sent to Sledgehammer. Check Sledgehammer's user guide for details.
         @param printer: the printer to print the expressions of the retrived lemmas,
                         'pretty' for the system pretty printing, 'sexpr' for S-expression.
-        @return: a dictionary from the name of the retrived lemmas to their expressions.
+        @param mode: the mode of the premise selection, any of ['leading', 'final', 'each'].
+            'leading': only select the lemmas relevant to the leading goal.
+            'final' : select the lemmas relevant to the final goal(s).
+                      Multiple final goals are connected by '&&' to be considered as a single goal.
+            'each'  : select the lemmas relevant to each goal.
+        @return:
+            for mode = 'leading' or 'final':
+                return a dictionary from the name of the retrived lemmas to their expressions.
+            for mode = 'each':
+                return a list of such dictionaries for each of the subgoal.
         """
         if not isinstance(number, int):
             raise ValueError("the argument `number` must be an int")
@@ -958,8 +967,10 @@ class Client:
             raise ValueError("the argument `params` must be a dict")
         if not isinstance(printer, str):
             raise ValueError("the argument `printer` must be a string")
+        if not isinstance(mode, str):
+            raise ValueError("the argument `mode` must be a string")
         mp.pack("\x05premise_selection", self.cout)
-        mp.pack((number, methods, params, printer), self.cout)
+        mp.pack((number, methods, params, printer, mode), self.cout)
         self.cout.flush()
         return Client._parse_control_(self.unpack.unpack())
 

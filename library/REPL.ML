@@ -96,7 +96,14 @@ val retrieve_fact : string -> Proof.context * thm list
 
 val trim_makrup  : string -> string
 val sledgehammer : int (*timeout in seconds*) -> string
-val premise_selection : Sledgehammer_Prover.params ->
+
+val premise_selection_each_goal : Sledgehammer_Prover.params ->
+      Sledgehammer_Fact.fact_override ->
+        int -> (string * Sledgehammer_Fact.fact list) list list
+val premise_selection_ultimate_goal : Sledgehammer_Prover.params ->
+      Sledgehammer_Fact.fact_override ->
+        int -> (string * Sledgehammer_Fact.fact list) list
+val premise_selection_leading_goal : Sledgehammer_Prover.params ->
       Sledgehammer_Fact.fact_override ->
         int -> (string * Sledgehammer_Fact.fact list) list
 
@@ -844,8 +851,7 @@ fun sledgehammer timeout' =
        end
      | NONE      => raise REPL_fail "Not in a proof context." )
 
-
-fun premise_selection param override number =
+fun gen_premise_selection select param override number =
   (*number: how many facts do you want me to return*)
   case Thread_Data.get state
     of NONE           => raise REPL_fail  "INTERNAL ERROR: state lost"
@@ -853,9 +859,13 @@ fun premise_selection param override number =
   case try Toplevel.proof_of s
     of SOME stat =>
        let val {context, facts, goal} = Proof.raw_goal stat
-        in Premise_Selection.SH_select param override number context facts goal
+        in select param override number context facts goal
        end
      | NONE      => raise REPL_fail "Not in a proof context." )
+
+val premise_selection_each_goal = gen_premise_selection Premise_Selection.SH_select
+val premise_selection_ultimate_goal = gen_premise_selection Premise_Selection.SH_select_ultimate_goal
+val premise_selection_leading_goal = gen_premise_selection Premise_Selection.SH_select_leading_goal
 
 (** get context **)
 
