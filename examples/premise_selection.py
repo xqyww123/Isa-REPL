@@ -28,7 +28,7 @@ except REPLFail as e:
     print(e)
     exit(1)
 
-res = c.premise_selection(number, methods, {}, printer)
+res = c.premise_selection('final', number, methods, {}, printer)
 print ('premise selection results:')
 for k, v in res.items():
     print(f'{k}: {v}')

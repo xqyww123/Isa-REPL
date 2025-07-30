@@ -890,8 +890,17 @@ fun get_context () =
         val facts = Proof_Context.facts_of ctxt
         val props = map #1 (Facts.props facts)
 
+        fun steal ctxt =
+          let val lv = Local_Theory.level ctxt
+              val ret = Unsynchronized.ref NONE
+           in Local_Theory.map_contexts (fn i => fn X =>
+                ((if i = lv - 1 then ret := SOME X else () ); X)) ctxt
+            ; case !ret
+                of SOME ret => ret
+                 | NONE => error "BUG: REPL.get_context.steal"
+          end
         val facts' = if can Local_Theory.assert ctxt
-             then Proof_Context.facts_of (Local_Theory.target_of ctxt)
+             then Proof_Context.facts_of (steal ctxt)
              else Global_Theory.facts_of (Proof_Context.theory_of ctxt)
 
         val local_facts =
