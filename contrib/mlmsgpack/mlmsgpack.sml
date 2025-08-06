@@ -46,7 +46,7 @@ functor MessagePack(S : sig
     val packOption : 'a packer -> 'a option packer
   end
   structure Unpack : sig
-    type 'a unpacker
+    type 'a unpacker = S.instream -> 'a * S.instream
 
     val doUnpack : 'a unpacker -> S.instream -> 'a * S.instream
   
@@ -61,6 +61,7 @@ functor MessagePack(S : sig
     val unpackArray  : 'a unpacker -> 'a array unpacker
 
     val unpackPair : 'a unpacker * 'b unpacker -> ('a * 'b) unpacker
+    val unpackPair_dep : 'a unpacker -> ('a -> 'b unpacker) -> ('a * 'b) unpacker
     val unpackTuple3 : 'a unpacker * 'b unpacker * 'c unpacker -> ('a * 'b * 'c) unpacker
     val unpackTuple4 : 'a unpacker * 'b unpacker * 'c unpacker * 'd unpacker -> ('a * 'b * 'c * 'd) unpacker
     val unpackTuple5 : 'a unpacker * 'b unpacker * 'c unpacker * 'd unpacker * 'e unpacker -> ('a * 'b * 'c * 'd * 'e) unpacker
@@ -462,6 +463,15 @@ end = struct
         val ins0 = expect (fixArray 2) ins
         val (v1, ins1) = u1 ins0
         val (v2, ins2) = u2 ins1
+      in
+        ((v1, v2), ins2)
+      end
+
+     fun unpackPair_dep u1 u2 ins =
+      let
+        val ins0 = expect (fixArray 2) ins
+        val (v1, ins1) = u1 ins0
+        val (v2, ins2) = u2 v1 ins1
       in
         ((v1, v2), ins2)
       end

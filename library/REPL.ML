@@ -398,6 +398,7 @@ fun init_thy ignore_imports {thy_qualifier, base_dir, additional_libs, import_di
             if null parents then [Pure] else parents
    in Resources.begin_theory base_dir header parents
    |> Config.put_global Printer.show_markup false
+   |> Config.put_global Printer.show_type_emphasis false
    |> (fn thy =>
       let val ctxt = Proof_Context.init_global thy
           val keywords = Thy_Header.get_keywords thy

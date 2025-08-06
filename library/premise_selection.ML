@@ -78,4 +78,13 @@ fun SH_select_debug num state =
                 context facts goal
   end
 
+fun SH_select_debug_ultimate_goal num state =
+  let val thy = Toplevel.theory_of state
+      val state = Toplevel.proof_of state
+      val {context, facts, goal} = Proof.goal state
+   in SH_select_ultimate_goal (Sledgehammer_Commands.default_params thy [])
+                Sledgehammer_Fact.no_fact_override num
+                context facts goal
+  end
+
 end
