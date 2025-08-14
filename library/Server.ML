@@ -15,6 +15,9 @@ val socket_out_of : unit -> BinIO.StreamIO.outstream
 val output_err : BinIO.StreamIO.outstream -> string -> unit
 val output     : BinIO.StreamIO.outstream -> 'a MessagePackBinIO.Pack.packer -> 'a -> unit
 
+val make_streams : (INetSock.inet, Socket.active Socket.stream) Socket.sock
+                -> BinIO.StreamIO.instream * BinIO.StreamIO.outstream
+
 end
 
 val REPL_ML_sender_DO_NOT_OVERRIDE_ : REPL.collector option Unsynchronized.ref
@@ -229,10 +232,10 @@ fun startup base_dir_of_theories thy0 addr0 =
       val socket: Socket.passive INetSock.stream_sock = INetSock.TCP.socket ()
       val _ = Socket.Ctl.setREUSEADDR (socket, true)
 
-      fun parse_addr socket_name =
-         let fun err () = error ("Bad socket name: " ^ quote socket_name);
+      fun parse_addr address =
+         let fun err () = error ("Bad address: " ^ quote address);
              val (host, port) =
-                  (case space_explode ":" socket_name of [h, p] =>
+                  (case space_explode ":" address of [h, p] =>
                            (case NetHostDB.getByName h of SOME host => host | NONE => err (),
                             case Int.fromString p of SOME port => port | NONE => err ())
                      | _ => err ());
