@@ -200,11 +200,10 @@ fun print_xml {bv_typ, num_typ, free_typ, constant_typ, all_typ, sorting} xml =
                   | CONSTANT of {name: string, full_name: string}
                   | CLASS of {name: string, full_name: string}
                   | TYPE  of {name: string, full_name: string}
-                  
-                  
 
       fun one_str (Elem (("block", _), [x])) = one_str x
         | one_str (Elem (("delimiter", _), [x])) = one_str x
+        | one_str (Elem (("literal", _), [x])) = one_str x
         | one_str (Text s) = s
         | one_str x = raise XML_DUMP_FAIL x
 
@@ -221,7 +220,13 @@ fun print_xml {bv_typ, num_typ, free_typ, constant_typ, all_typ, sorting} xml =
         | dump_xml (origin as Elem (("entity", attrs), [x])) ret =
            (case lookup attrs "kind"
               of SOME "class" => CLASS {name = one_str x, full_name = lookup' attrs "name"}
-               | SOME "constant" => CONSTANT {name = one_str x, full_name = lookup' attrs "name"}
+               | SOME "constant" =>
+                    let val name = one_str x
+                     in case name
+                     of "0" => NUMBER "0"
+                      | "1" => NUMBER "1"
+                      | _ => CONSTANT {name = name, full_name = lookup' attrs "name"}
+                    end
                | SOME "type_name" => TYPE {name = one_str x, full_name = lookup' attrs "name"}
                | _ => raise XML_DUMP_FAIL origin
            ) :: ret
