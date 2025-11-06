@@ -67,7 +67,7 @@ def get_SYMBOLS_AND_REVERSED():
     SYMBOLS, REVERSE_SYMBOLS = {}, {}
     for file in [f"{isabelle_home}/etc/symbols", f"{isabelle_home_user}/etc/symbols"]:
         SYMBOLS, REVERSE_SYMBOLS = _load_symbols(file, SYMBOLS, REVERSE_SYMBOLS)
-    SYMBOLS_CACHE = (SYMBOLS, REVERSE_SYMBOLS)
+    SYMBOLS_CACHE = (SYMBOLS, REVERSE_SYMBOLS, str.maketrans(REVERSE_SYMBOLS))
     return SYMBOLS_CACHE
 
 def get_SYMBOLS():
@@ -84,6 +84,17 @@ SUBSUP_TRANS_TABLE = {
     "⇩-": "₋", "⇧-": "⁻", "⇩+": "₊", "⇧+": "⁺", "⇩=": "₌", "⇧=": "⁼",
     "⇩(": "₍", "⇧(": "⁽", "⇩)": "₎", "⇧)": "⁾",
 }
+
+SUBSUP_RESTORE_TABLE = {
+    "₀": "⇩0", "₁": "⇩1", "₂": "⇩2", "₃": "⇩3", "₄": "⇩4",
+    "₅": "⇩5", "₆": "⇩6", "₇": "⇩7", "₈": "⇩8", "₉": "⇩9",
+    "⁰": "⇧0", "¹": "⇧1", "²": "⇧2", "³": "⇧3", "⁴": "⇧4",
+    "⁵": "⇧5", "⁶": "⇧6", "⁷": "⇧7", "⁸": "⇧8", "⁹": "⇧9",
+    "₋": "⇩-", "⁻": "⇧-", "₊": "⇩+", "⁺": "⇧+", "₌": "⇩=", "⁼": "⇧=",
+    "₍": "⇩(", "⁽": "⇧(", "₎": "⇩)", "⁾": "⇧)",
+}
+
+SUBSUP_RESTORE_TABLE_trans = str.maketrans(SUBSUP_RESTORE_TABLE)
 
 class Position:
     def __init__(self, line, column, file):
@@ -898,6 +909,10 @@ class Client:
         return re.sub(subscript_pattern, replace_subsupscript, re.sub(pattern, replace_symbol, src))
 
     @staticmethod
+    def unicode_of_ascii(src):
+        return Client.pretty_unicode(src)
+
+    @staticmethod
     def ascii_of_unicode(src):
         """
         Argument src: Any unicode string
@@ -906,8 +921,8 @@ class Client:
         """
         # map every character `c` in `src` to REVERSE_SYMBOLS[c] if c in REVERSE_SYMBOLS, otherwise c
         # Use str.translate with a translation table for maximum efficiency
-        trans_table = str.maketrans(get_REVERSE_SYMBOLS())
-        return src.translate(trans_table)
+        trans_table = get_SYMBOLS_AND_REVERSED()[2]
+        return src.translate(SUBSUP_RESTORE_TABLE_trans).translate(trans_table)
 
     def path_of_theory(self, theory_name, master_directory):
         if not isinstance(theory_name, str):
