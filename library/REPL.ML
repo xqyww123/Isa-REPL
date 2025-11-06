@@ -126,6 +126,8 @@ val get_toplevel_state : unit -> Toplevel.state
 val get_context : unit -> context
 val get_ctxt : unit -> Proof.context
 
+val update_toplevel_state : (Toplevel.state -> Toplevel.state) -> unit
+
 (*Auxiliary*)
 
 val disable_output : unit -> unit
@@ -1009,6 +1011,11 @@ fun get_toplevel_state () =
   case Thread_Data.get state
     of NONE           => raise REPL_fail  "INTERNAL ERROR: state lost"
      | SOME (s,_,_,_) => s
+
+fun update_toplevel_state F =
+  case Thread_Data.get state
+    of NONE           => raise REPL_fail  "INTERNAL ERROR: state lost"
+     | SOME (s,b,c,d) => Thread_Data.put state (SOME (F s, b, c, d))
 
 fun get_context () =
   let val s = get_toplevel_state ()

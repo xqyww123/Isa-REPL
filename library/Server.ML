@@ -5,7 +5,10 @@ type address = string (*IP address:port*)
 val startup : Path.T -> theory option -> address -> Isabelle_Thread.T
 val kill_server : address -> unit
 
-type App = (BinIO.StreamIO.instream Unsynchronized.ref * BinIO.StreamIO.outstream) -> unit
+type App = ( BinIO.StreamIO.instream Unsynchronized.ref
+           * BinIO.StreamIO.outstream
+           * Toplevel.state )
+        -> Toplevel.state
 val register_app : string -> App -> unit
 val app_of : string -> App option
 
@@ -31,23 +34,15 @@ structure REPL_Server : REPL_SEVER = struct
 
 (* App *)
 
-type App = (BinIO.StreamIO.instream Unsynchronized.ref * BinIO.StreamIO.outstream) -> unit
-val apps = Thread_Data.var () : App Symtab.table Unsynchronized.ref Thread_Data.var
+type App = ( BinIO.StreamIO.instream Unsynchronized.ref
+           * BinIO.StreamIO.outstream
+           * Toplevel.state )
+        -> Toplevel.state
+val apps = Synchronized.var "REPL-Apps" Symtab.empty : App Symtab.table Synchronized.var
 
-fun app_of name =
-  case Thread_Data.get apps
-    of SOME apps => Symtab.lookup (!apps) name
-     | NONE => NONE
+fun app_of name = Symtab.lookup (Synchronized.value apps) name
 
-fun register_app name app =
-  let val apps = case Thread_Data.get apps
-                   of SOME rf => rf
-                    | NONE => let val rf = Unsynchronized.ref Symtab.empty
-                               in Thread_Data.put apps (SOME rf)
-                                ; rf
-                              end
-   in apps := Symtab.update (name, app) (!apps)
-  end
+fun register_app name app = Synchronized.change apps (Symtab.update (name, app))
 
 val sockets = Thread_Data.var ()
 fun socket_in_of  () = the (Thread_Data.get sockets) |> fst
@@ -476,7 +471,7 @@ fun startup base_dir_of_theories thy0 addr0 =
                          | SOME app => (
                               output cout packBool true
                             ; BinIO.StreamIO.flushOut cout
-                            ; app (cin, cout))
+                            ; REPL.update_toplevel_state (fn state => app (cin, cout, state)))
                        end
                  | "\005ML" => let
                            val (thy,src) = read (unpackPair (unpackString,unpackString))
