@@ -690,7 +690,15 @@ fun RE (cfg:cfg) source : command_outputs =
         | loop ret errs [] (src::srcs) s =
             loop ret errs (parse_text cfg register_theory' s src) srcs s
         | loop ret errs ((tr,current_cmd)::trs) srcs s =
-            case (case #single_cmd_timeout cfg
+            let val (tr,current_cmd) =
+                  if Toplevel.is_malformed tr
+                  then let val thy = Toplevel.theory_of s
+                        in Command_Span.content current_cmd
+                        |> Outer_Syntax.parse_span thy (K thy)
+                        |> rpair current_cmd
+                       end
+                  else (tr,current_cmd)
+             in case (case #single_cmd_timeout cfg
                     of NONE => Toplevel.command_errors false tr s
                      | SOME time =>
                           if apply_single_cmd_timeout current_cmd
@@ -727,6 +735,7 @@ fun RE (cfg:cfg) source : command_outputs =
                          (trim_err err @ errs)
                          trs srcs s'
                 end
+            end
 
       val (ret, s') = loop [] [] [] srcs s0
 
