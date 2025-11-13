@@ -151,6 +151,8 @@ val add_global_theories : string * theory -> unit
 val split_thy_headers : Symbol_Pos.T list -> Symbol_Pos.T list list
 val pure_keywords : Keyword.keywords
 
+val init_printers : unit -> unit
+
 end
 
 structure REPL : REPL = struct
@@ -379,22 +381,28 @@ fun get_and_clean_message () =
     of SOME (id, _) => get_and_clean_message' id
      | NONE => []
 
+val printer_inited = Synchronized.var "Isa-REPL.printer_inited" false
+
 fun init_printers () =
-  let fun output_fn typ fallback = (fn ms =>
-            case Thread_Data.get Session_ID
-              of SOME (id, _) =>
-                    Synchronized.change message_buffer
-                        (Inttab.map_entry id (fn L => (typ, trim_makrup (implode ms)) :: L))
-               | NONE => fallback ms )
-   in Private_Output.writeln_fn := output_fn NORMAL  (!Private_Output.writeln_fn)
-    ; Private_Output.tracing_fn := output_fn TRACING (!Private_Output.tracing_fn)
-    ; Private_Output.warning_fn := output_fn WARNING (!Private_Output.warning_fn)
-  end
+  Synchronized.change printer_inited (
+    fn false =>
+      let fun output_fn typ fallback = (fn ms =>
+                case Thread_Data.get Session_ID
+                  of SOME (id, _) =>
+                        Synchronized.change message_buffer
+                            (Inttab.map_entry id (fn L => (typ, trim_makrup (implode ms)) :: L))
+                   | NONE => fallback ms )
+       in Private_Output.writeln_fn := output_fn NORMAL  (!Private_Output.writeln_fn)
+        ; Private_Output.tracing_fn := output_fn TRACING (!Private_Output.tracing_fn)
+        ; Private_Output.warning_fn := output_fn WARNING (!Private_Output.warning_fn)
+        ; true
+      end
+      | _ => true)
 
 
 val (origin_writeln, origin_tracing, origin_warning) =
     (!Private_Output.writeln_fn, !Private_Output.tracing_fn, !Private_Output.warning_fn)
-val _ = init_printers ()
+(* val _ = init_printers () *)
 
 fun disable_output () = (
   Private_Output.writeln_fn := K () ;
@@ -565,6 +573,7 @@ fun parse_text' thy init text =
      Token.tokenize (Thy_Header.get_keywords thy) {strict = false} text
   |> Outer_Syntax.parse_spans
   |> map (` (Command_Span.content #> Outer_Syntax.parse_span thy init))
+  |> filter_out (Toplevel.is_ignored o fst)
 
 fun lex_split drop_first drop_if_no_meet kws ATTACH P source =
   let val toks = Token.tokenize kws {strict = false} source
@@ -601,7 +610,6 @@ fun parse_text (cfg:cfg) register_theory' state source =
                      (Symbol_Pos.content source)
     else ()
     ; parse_text' thy (K thy) source
-   |> filter_out (Toplevel.is_ignored o fst)
   end
 
 fun set_trace v =
