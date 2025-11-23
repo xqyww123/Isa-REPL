@@ -23,13 +23,6 @@ val make_streams : (INetSock.inet, Socket.active Socket.stream) Socket.sock
 
 end
 
-val REPL_ML_sender_DO_NOT_OVERRIDE_ : REPL.collector option Unsynchronized.ref
-      = Unsynchronized.ref NONE
-val REPL_ML_sender2_DO_NOT_OVERRIDE_ : (unit -> unit) option Unsynchronized.ref
-      = Unsynchronized.ref NONE
-val REPL_ML_sender_DO_NOT_OVERRIDE_locker_
-      = Synchronized.var "REPL_ML_sender_DO_NOT_OVERRIDE_locker_" ()
-
 structure REPL_Server : REPL_SEVER = struct
 
 (* App *)
@@ -132,7 +125,7 @@ fun run_ML ctxt source =
             ML_Lex.read "REPL_ML_sender2_DO_NOT_OVERRIDE_ := SOME (fn () => (" @
             ML_Lex.read source @
             ML_Lex.read "))"
-          ) ctxt ;
+          ) (the_default (Context.Theory @{theory}) ctxt) ;
         ret := ! REPL_ML_sender2_DO_NOT_OVERRIDE_ ;
         REPL_ML_sender2_DO_NOT_OVERRIDE_ := NONE
       ))
@@ -214,6 +207,48 @@ fun run_resource_supervison base_dir =
          | some => some)
   end
 
+(*
+fun spawn_worker conn =
+  let val (cin, cout) = make_streams conn
+      val (version, cin) = MessagePackBinIO.Unpack.doUnpack (MessagePackBinIO.Unpack.unpackString) cin
+   in case version
+   of "0.13.0" => ()
+    | "heartbeat" =>
+      then \<^try>\<open> (
+           output cout MessagePackBinIO.Pack.packUnit ()
+         ; BinIO.StreamIO.flushOut cout )
+        finally (
+           BinIO.StreamIO.closeOut cout
+         ; BinIO.StreamIO.closeIn  cin
+         ; raise CONTINUE ) \<close>
+      else if String.isPrefix "kill " version
+      then \<^try>\<open>
+       let val target = String.substring (version, 5, size version - 5)
+                     |> try Value.parse_nat
+                     |> the_default ~1
+           val dict = Synchronized.value clients
+           val found =
+                case Inttab.lookup dict target
+                  of SOME (T, _) => (
+                       Isabelle_Thread.interrupt_thread T
+                     ; true )
+                   | NONE   => false
+        in output cout MessagePackBinIO.Pack.packBool found
+         ; BinIO.StreamIO.flushOut cout
+       end
+        finally (
+           BinIO.StreamIO.closeOut cout
+         ; BinIO.StreamIO.closeIn  cin
+         ; raise CONTINUE )\<close>
+      else (
+        output_err cout "The server is connected with a wrong version of the client.\n\
+                 \Please run `pip install \"IsaREPL==0.12.2\" --force-reinstall` to update your client."
+      ; BinIO.StreamIO.flushOut cout
+      ; BinIO.StreamIO.closeOut cout
+      ; BinIO.StreamIO.closeIn  cin
+      ; raise CONTINUE)
+  end
+*)
 
 fun startup base_dir_of_theories thy0 addr0 =
   let val _ = if File.is_dir base_dir_of_theories
@@ -247,7 +282,8 @@ fun startup base_dir_of_theories thy0 addr0 =
       val evaluation_cache_store = Synchronized.var "evaluation_cache_store" Symtab.empty
       val evaluation_cache_counter = Counter.make ()
 
-      val clients = Synchronized.var "REPL clients" (Inttab.empty : Isabelle_Thread.T Inttab.table)
+      type error_buf = string list Synchronized.var
+      val clients = Synchronized.var "REPL clients" (Inttab.empty : (Isabelle_Thread.T * error_buf) Inttab.table)
 
       exception CONTINUE
    in writeln msg
@@ -260,10 +296,8 @@ fun startup base_dir_of_theories thy0 addr0 =
     ; \<^try>\<open> while true do (
       let val (conn,sender) = Socket.accept socket
           val (cin, cout) = make_streams conn
-
-          val (version, cin) = MessagePackBinIO.Unpack.doUnpack
-                                          (MessagePackBinIO.Unpack.unpackString) cin
-          val _ = if version = "0.12.2" then ()
+          val (version, cin) = MessagePackBinIO.Unpack.doUnpack (MessagePackBinIO.Unpack.unpackString) cin
+          val _ = if version = "0.13.0" then ()
                   else if version = "heartbeat"
                   then \<^try>\<open> (
                        output cout MessagePackBinIO.Pack.packUnit ()
@@ -280,7 +314,7 @@ fun startup base_dir_of_theories thy0 addr0 =
                        val dict = Synchronized.value clients
                        val found =
                             case Inttab.lookup dict target
-                              of SOME T => (
+                              of SOME (T, _) => (
                                    Isabelle_Thread.interrupt_thread T
                                  ; true )
                                | NONE   => false
@@ -338,12 +372,17 @@ fun startup base_dir_of_theories thy0 addr0 =
                   base_dir = Path.dir path,
                   write_thy = false }
             end
-              
-              
-          fun iteration () =
+
+          fun iteration client_id =
             let open MessagePackBinIO.Unpack
                 open MessagePackBinIO.Pack
                 val source = read unpackString
+                fun report_error cout msg = (
+                      (case Inttab.lookup (Synchronized.value clients) client_id
+                         of SOME (_, buf) =>
+                              Synchronized.change buf (fn L => msg :: L)
+                          | NONE => ()
+                   ); output_err cout msg )
              in \<^try>\<open> (
               if String.isPrefix "\005" source
               then let
@@ -474,9 +513,9 @@ fun startup base_dir_of_theories thy0 addr0 =
                             ; REPL.update_toplevel_state (fn state => app (cin, cout, state)))
                        end
                  | "\005ML" => let
-                           val (thy,src) = read (unpackPair (unpackString,unpackString))
-                           val [thy] = REPL.thy_loader NONE "HOL" [thy]
-                        in run_ML (Context.Theory thy) src
+                           val (thy,src) = read (unpackPair (unpackOption unpackString, unpackString))
+                           val thy = Option.map (singleton (REPL.thy_loader NONE "HOL")) thy
+                        in run_ML (Option.map Context.Theory thy) src
                          ; output cout packBool true
                        end
                  | "\005load" => let
@@ -706,26 +745,39 @@ fun startup base_dir_of_theories thy0 addr0 =
                             ; Symtab.empty ))
                          ; output cout packUnit ()
                        end
+                  | "\005diagnosis" => let
+                           val info = Inttab.fold (fn (id, (thread, ebuf)) => fn L =>
+                                let val errs  = Synchronized.change_result ebuf (rpair [])
+                                    val state = (Isabelle_Thread.is_active thread, errs)
+                                 in (id, state) :: L
+                                end )
+                              (Synchronized.value clients) []
+                        in output cout (packList (packPair (packInt, packPair (packBool, packList packString)))) info
+                       end
                   | other => raise REPL.REPL_fail ("Unknown REPL command" ^ other)
-                end handle REPL.REPL_fail E =>
-                       output_err cout E
+                end handle REPL.REPL_fail E => report_error cout E
               else let
                 val ret = REPL.RE (!cfg) source
                  in doPack REPL_Serialize.command_outputs_packer ret cout
                 end )
-              catch E =>
-                    output_err cout (Runtime.exn_message E) \<close>
+              catch E => (
+                    report_error cout (Runtime.exn_message E)
+                  ; File.write (Path.explode "/tmp/last_error") (Runtime.exn_message E)
+                  )\<close>
             end
-          fun loop () =
+          fun loop client_id =
             let val continue = Unsynchronized.ref true
              in while !continue do
                   if BinIO.StreamIO.endOfStream (!cin)
                   then continue := false
-                  else ( iteration ()
+                  else ( iteration client_id
                        ; BinIO.StreamIO.flushOut cout)
             end
+
+          
+
        in Isabelle_Thread.fork (  Isabelle_Thread.params "REPL-worker"
-                                |> Isabelle_Thread.interrupts )
+                               |> Isabelle_Thread.interrupts )
                                (fn () =>
             let val id = REPL.init_repler thy0
                 val base_dir = Path.append base_dir_of_theories (Path.basic (string_of_int id))
@@ -747,11 +799,12 @@ fun startup base_dir_of_theories thy0 addr0 =
             let open MessagePackBinIO.Pack
              in Thread_Data.put sockets (SOME (cin, cout))
               ; REPL.record_state "init"
-              ; Synchronized.change clients (Inttab.update (id, Isabelle_Thread.self ()))
+              ; Synchronized.change clients (Inttab.update (id,
+                            (Isabelle_Thread.self (), Synchronized.var "" [])))
               ; output cout (packPair (packInt, packInt))
                             (Value.parse_int (getenv_strict "REPL_PID"), id)
               ; BinIO.StreamIO.flushOut cout
-              ; loop ()
+              ; loop id
             end finally (
                 BinIO.StreamIO.closeOut cout
               ; BinIO.StreamIO.closeIn (!cin)

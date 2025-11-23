@@ -338,3 +338,10 @@ fun column_of_pos src =
   end 
 
 end
+
+val REPL_ML_sender_DO_NOT_OVERRIDE_ : REPL.collector option Unsynchronized.ref
+      = Unsynchronized.ref NONE
+val REPL_ML_sender2_DO_NOT_OVERRIDE_ : (unit -> unit) option Unsynchronized.ref
+      = Unsynchronized.ref NONE
+val REPL_ML_sender_DO_NOT_OVERRIDE_locker_
+      = Synchronized.var "REPL_ML_sender_DO_NOT_OVERRIDE_locker_" ()

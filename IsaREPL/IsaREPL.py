@@ -4,6 +4,8 @@ import os
 import signal
 from collections import namedtuple
 import re
+import threading
+import time
 
 REPLFail = type('REPLFail', (Exception,), {})
 
@@ -181,7 +183,8 @@ class Client:
     A client for connecting Isabelle REPL
     """
 
-    VERSION = '0.12.2'
+    VERSION = '0.13.0'
+    clients = {} # from client_id to Client instance
 
     def __init__(self, addr, thy_qualifier, timeout=3600):
         """
@@ -228,7 +231,12 @@ class Client:
         mp.pack(Client.VERSION, self.cout)
         mp.pack(thy_qualifier, self.cout)
         self.cout.flush()
-        (self.pid, self._client_id) = Client._parse_control_(self.unpack.unpack())
+        (self.pid, self.client_id) = Client._parse_control_(self.unpack.unpack())
+        Client.clients[self.client_id] = self
+
+    def _chk_live(self):
+        if self.cout.closed or self.cin.closed:
+            raise REPLFail(f"Client {self.client_id} is dead or closed")
 
     @staticmethod
     def test_server(addr, timeout=60):
@@ -269,8 +277,9 @@ class Client:
         if self.sock:
             self.sock.close()
             self.sock = None
+        del Client.clients[self.client_id]
         try:
-            Client.kill_client(self.addr, self._client_id)
+            Client.kill_client(self.addr, self.client_id)
         except:
             pass
 
@@ -302,6 +311,7 @@ class Client:
         timeout: the milliseconds to wait for the evaluation to finish.
         cmd_timeout: the milliseconds to wait for every single command other than sledgehammer and auto_sledgehammer.
         """
+        self._chk_live()
         if not isinstance(source, str):
             raise ValueError("the argument source must be a string")
         if timeout is not None and not isinstance(timeout, int):
@@ -327,6 +337,7 @@ class Client:
         You can set the `trace` to false to disable the collection of the outputs,
         which speeds up the REPL a lot.
         """
+        self._chk_live()
         if not isinstance(trace, bool):
             raise ValueError("the argument trace must be a string")
         mp.pack("\x05trace" if trace else "\x05notrace", self.cout)
@@ -334,6 +345,7 @@ class Client:
         Client._parse_control_(self.unpack.unpack())
 
     def set_register_thy(self, value):
+        self._chk_live()
         if not isinstance(value, bool):
             raise ValueError("the argument value must be a string")
         mp.pack("\x05register_thy" if value else "\x05no_register_thy", self.cout)
@@ -349,6 +361,7 @@ class Client:
         Comments and blank spaces are usualy appended to the command before them.
         However, leading comments and spaces that occur before any command are discarded.
         """
+        self._chk_live()
         if not isinstance(source, str):
             raise ValueError("the argument source must be a string")
         mp.pack("\x05lex", self.cout)
@@ -360,6 +373,7 @@ class Client:
         return ret
 
     def lex_file(self, file):
+        self._chk_live()
         if not isinstance(file, str):
             raise ValueError("the argument file must be a string")
         mp.pack("\x05lex_file", self.cout)
@@ -377,6 +391,7 @@ class Client:
         This faster version just use the predefined system keywords of Isar, so it
         doesn't need to load any imports but can fail to parse some user keywords.
         """
+        self._chk_live()
         if not isinstance(source, str):
             raise ValueError("the argument source must be a string")
         mp.pack("\x05lex'", self.cout)
@@ -431,6 +446,7 @@ class Client:
         `new_state` allows you to alter the evaluation state. Set `new_state` to NONE if you
         do not want to change the state.
         """
+        self._chk_live()
         if not isinstance(thy, str):
             raise ValueError("the argument thy must be a string")
         if not isinstance(name, str):
@@ -450,6 +466,7 @@ class Client:
         Argument `name` must be the name passed to the `plugin` method.
         This interface sliently does nothing if no plugin named `name` is installed.
         """
+        self._chk_live()
         if not isinstance(name, str):
             raise ValueError("the argument name must be a string")
         mp.pack("\x05unplugin", self.cout)
@@ -497,6 +514,7 @@ class Client:
         This conversion just intends to explain the meaning of each data field,
         and convert the data into an easy-to-understand form.
         """
+        self._chk_live()
         if data[0] is None:
             outputs = None
         else:
@@ -513,6 +531,7 @@ class Client:
         }
 
     def silly_eval(self, source):
+        self._chk_live()
         ret = self.eval(source)
         return Client.boring_parse(ret)
 
@@ -521,6 +540,7 @@ class Client:
         Record the current evaluation state so that later you could rollback to
         this state using name `name`.
         """
+        self._chk_live()
         if not isinstance(name, str):
             raise ValueError("the argument name must be a string")
         mp.pack("\x05record", self.cout)
@@ -532,6 +552,7 @@ class Client:
         """
         Remove all recorded states.
         """
+        self._chk_live()
         mp.pack("\x05clean_history", self.cout)
         self.cout.flush()
         Client._parse_control_(self.unpack.unpack())
@@ -544,6 +565,7 @@ class Client:
         However, the `command_name` fielld will be always an empty string,
         `output` be an empty list, and `latex` be NONE, because no command is executed.
         """
+        self._chk_live()
         if not isinstance(name, str):
             raise ValueError("the argument name must be a string")
         mp.pack("\x05rollback", self.cout)
@@ -559,6 +581,7 @@ class Client:
         However, the `command_name` fielld will be always an empty string,
         `output` be an empty list, and `latex` be NONE, because no command is executed.
         """
+        self._chk_live()
         mp.pack("\x05history", self.cout)
         self.cout.flush()
         return Client._parse_control_(self.unpack.unpack())
@@ -577,6 +600,7 @@ class Client:
         must have evaluated certain code like `theory THY imports Main begin` using
         the `eval` interface.
         """
+        self._chk_live()
         if not isinstance(term, str):
             raise ValueError("the argument term must be a string")
         mp.pack ("\x05sexpr_term", self.cout)
@@ -592,6 +616,7 @@ class Client:
         Names must be separated by space, e.g., `HOL.simp_thms conj_cong[symmetric] conjI`
         A list of pretty-printed string of the facts will be returned in the same order of the names.
         """
+        self._chk_live()
         if not isinstance(names, str):
             raise ValueError("the argument term must be a string")
         mp.pack ("\x05fact", self.cout)
@@ -603,6 +628,7 @@ class Client:
         """
         Similar with `fact` but returns the S-expressions of the terms of the facts.
         """
+        self._chk_live()
         if not isinstance(names, str):
             raise ValueError("the argument term must be a string")
         mp.pack ("\x05sexpr_fact", self.cout)
@@ -633,6 +659,7 @@ class Client:
         `delcare [[REPL_sledgehammer_preplay_timeout = <ANY SECONDS>]]`
         e.g, `delcare [[REPL_sledgehammer_preplay_timeout = 6]]`
         """
+        self._chk_live()
         if not isinstance(timeout, int):
             raise ValueError("the argument name must be an integer")
         mp.pack("\x05hammer", self.cout)
@@ -659,6 +686,7 @@ class Client:
 
         The formatter of S expression is given in ../library/REPL_serializer.ML:s_expr.
         """
+        self._chk_live()
         if not isinstance(pp, str):
             raise ValueError("the argument pp must be a string")
         mp.pack("\x05context", self.cout)
@@ -667,6 +695,7 @@ class Client:
         return Client._parse_control_(self.unpack.unpack())
 
     def parse_ctxt(raw):
+        self._chk_live()
         return {
             'local_facts': raw[0],
             'assumptions': raw[1],
@@ -677,6 +706,7 @@ class Client:
         }
 
     def silly_context(self, s_expr):
+        self._chk_live()
         return Client.parse_ctxt(self.context(s_expr))
 
     def sexpr_term(self, term):
@@ -687,6 +717,7 @@ class Client:
         must have evaluated certain code like `theory THY imports Main begin` using
         the `eval` interface.
         """
+        self._chk_live()
         if not isinstance(term, str):
             raise ValueError("the argument term must be a string")
         mp.pack("\x05sexpr_term", self.cout)
@@ -702,6 +733,7 @@ class Client:
         Names must be separated by space, e.g., `HOL.simp_thms conj_cong[symmetric] conjI`
         A list of pretty-printed string of the facts will be returned in the same order of the names.
         """
+        self._chk_live()
         if not isinstance(names, str):
             raise ValueError("the argument `names` must be a string")
         mp.pack("\x05fact", self.cout)
@@ -713,6 +745,7 @@ class Client:
         """
         Similar with `fact` but returns the S-expressions of the terms of the facts.
         """
+        self._chk_live()
         if not isinstance(names, str):
             raise ValueError("the argument `names` must be a string")
         mp.pack("\x05sexpr_fact", self.cout)
@@ -726,6 +759,7 @@ class Client:
         See `Client.__init__` for the explaination of `thy_qualifier`
         Returns None if success.
         """
+        self._chk_live()
         if not isinstance(thy_qualifier, str):
             raise ValueError("the argument `thy_qualifier` must be a string")
         mp.pack("\x05qualifier", self.cout)
@@ -739,6 +773,7 @@ class Client:
         the name of the session containing the theory file, or None if fails
         to figure this out.
         """
+        self._chk_live()
         if not isinstance(path, str):
             raise ValueError("the argument `path` must be a string")
         mp.pack("\x05session-of", self.cout)
@@ -753,6 +788,7 @@ class Client:
         It takes over the control of the in- and the out-socket stream, permitting the user
         to do anything he wants.
         """
+        self._chk_live()
         if not isinstance(name, str):
             raise ValueError("the argument `name` must be a string")
         mp.pack("\x05app", self.cout)
@@ -767,7 +803,8 @@ class Client:
         """
         Execute ML code in the global state of the Isabelle runtime.
         """
-        if not isinstance(thy, str):
+        self._chk_live()
+        if thy is not None and not isinstance(thy, str):
             raise ValueError("the argument `thy` must be a string")
         if not isinstance(src, str):
             raise ValueError("the argument `src` must be a string")
@@ -785,6 +822,7 @@ class Client:
         through the `isabelle component -u` commands.
         The method returns the full names of the loaded theories.
         """
+        self._chk_live()
         if not isinstance(thy_qualifier, str):
             raise ValueError("the argument `thy_qualifier` must be a string")
         if not is_list_of_strings(targets):
@@ -809,6 +847,7 @@ class Client:
 
         Timeout: the milliseconds to wait for the evaluation to finish.
         """
+        self._chk_live()
         if not isinstance(path, str):
             raise ValueError("the argument `path` must be a string")
         if not isinstance(line, int):
@@ -838,6 +877,7 @@ class Client:
         """
         Clean the evaluation cache recorded by the `file` method.
         """
+        self._chk_live()
         mp.pack("\x05clean_cache", self.cout)
         self.cout.flush()
         return Client._parse_control_(self.unpack.unpack())
@@ -850,6 +890,7 @@ class Client:
         :return:
         None
         """
+        self._chk_live()
         if not is_list_of_strings(libs):
             raise ValueError("the argument `libs` must be a list of strings")
         mp.pack("\x05addlibs", self.cout)
@@ -861,6 +902,7 @@ class Client:
         """
         :return: the number of processors available
         """
+        self._chk_live()
         mp.pack("\x05numcpu", self.cout)
         self.cout.flush()
         ret = Client._parse_control_(self.unpack.unpack())
@@ -872,6 +914,7 @@ class Client:
         """
         Set the timeout for commands other than sledgehammer and auto_sledgehammer.
         """
+        self._chk_live()
         if not (isinstance(timeout, int) or timeout is None):
             raise ValueError("the argument `timeout` must be an int or None")
         mp.pack("\x05cmd_timeout", self.cout)
@@ -925,6 +968,7 @@ class Client:
         return src.translate(SUBSUP_RESTORE_TABLE_trans).translate(trans_table)
 
     def path_of_theory(self, theory_name, master_directory):
+        self._chk_live()
         if not isinstance(theory_name, str):
             raise ValueError("the argument `theory_name` must be a string")
         if not isinstance(master_directory, str):
@@ -940,6 +984,7 @@ class Client:
         where fully_quantified_theory_name is a string,
               `theorys to import` is a list of strings, qualified or not as in the same shape of the given source,
         """
+        self._chk_live()
         if not isinstance(header_src, str):
             raise ValueError("the argument `header_src` must be a string")
         lines = self.fast_lex(header_src)
@@ -974,6 +1019,7 @@ class Client:
             for mode = 'each':
                 return a list of such dictionaries for each of the subgoal.
         """
+        self._chk_live()
         if not isinstance(number, int):
             raise ValueError("the argument `number` must be an int")
         if not isinstance(methods, list):
@@ -988,4 +1034,67 @@ class Client:
         mp.pack((number, methods, params, printer, mode), self.cout)
         self.cout.flush()
         return Client._parse_control_(self.unpack.unpack())
+
+    def _health_of_clients(self):
+        """
+        Return a dictionary from the client_id to (live : bool, errors since last check : string list).
+        You may use `Client.clients` to check the Client instance from the client_id.
+        """
+        self._chk_live()
+        mp.pack("\x05diagnosis", self.cout)
+        self.cout.flush()
+        return dict(Client._parse_control_(self.unpack.unpack()))
+    
+    _watchers = {}
+    _watchers_lock = threading.Lock()
+    @classmethod
+    def install_watcher(cls, addr, handler, interval : int = 2, allow_multiple_watchers : bool = False, replace_existing : bool = True):
+        """
+        Install a watcher to monitor the health of each client regularly.
+
+        handler: a funciton handling any abnormal status of client,
+                 of type (client_id, (is_live : bool, errors : string list)) -> None
+        interval: the interval in seconds to check the health of each client, default to 2 seconds.
+        allow_multiple_watchers: By default, only one watcher is allowed. But you can allow multiple watchers
+            by truning on this flag. Note, each error message can only be dispatched to one watcher of the multiple watchers randomly.
+        """
+        def _watcher_loop(stop):
+            with Client(addr, 'HOL') as client:
+                while not stop.is_set():
+                    health_of_clients = client._health_of_clients()
+                    for cid, (is_live, errors) in health_of_clients.items():
+                        if not is_live or errors:
+                            handler(cid, (is_live, errors))
+                    bads = None
+                    for cid, cc in cls.clients.items():
+                        if cid not in health_of_clients:
+                            handler(cid, (False, []))
+                            if bads is None:
+                                bads = []
+                            bads.append(cc)
+                    if bads is not None:
+                        for cc in bads:
+                            cc.close()
+                    time.sleep(interval)
+        with cls._watchers_lock:
+            if addr in cls._watchers:
+                watchers = cls._watchers[addr]
+            else:
+                watchers = []
+                cls._watchers[addr] = watchers
+            if replace_existing:
+                for _, stop in watchers:
+                    stop.set()
+                watchers.clear()
+            if watchers and not allow_multiple_watchers:
+                raise ValueError("Only one watcher is allowed")
+            stop = threading.Event()
+            watcher_thread = threading.Thread(target=_watcher_loop, args=(stop,))
+            watcher_thread.daemon = True
+            watchers.append((watcher_thread, stop))
+        watcher_thread.start()
+
+
+
+
 

@@ -91,7 +91,7 @@ begin
 ML \\<open>
 REPL.disable_output () ;
 try (Thy_Info.register_thy) @{theory Auto_Sledgehammer} ;
-Thy_Info.register_thy @{theory Isa_REPL} ;
+try Thy_Info.register_thy @{theory Isa_REPL} ;
 Isabelle_Thread.join (REPL_Server.startup (Path.explode "$(printf '%b' $MASTER_DIR)") NONE "$(printf '%b' $ADDR)");
 error "IGNORE THIS ERROR"
 \\<close>

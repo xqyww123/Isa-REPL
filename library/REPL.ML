@@ -417,7 +417,7 @@ fun disable_output () = (
   Private_Output.result_fn := K (K ())
 )
 
-(*val _ = Multithreading.parallel_proofs := 0 (*TODO: disable me!*)*)
+(* val _ = Multithreading.parallel_proofs := 0 (*TODO: disable me!*) *)
 
 (** State Rollback **)
 
@@ -455,6 +455,7 @@ fun thy_loader import_dir thy_qualifier targets_str =
           Symtab.defined (Synchronized.value global_theories) import
 
 
+      (*TODO: queue things to load and then process them together*)
       val _ = Synchronized.change loader_locker (fn () =>
         let val targets = filter_out (is_loaded o #theory_name) targets
             val _ = if not can_load andalso not (null targets)
