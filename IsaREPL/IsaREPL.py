@@ -1048,7 +1048,7 @@ class Client:
     _watchers = {}
     _watchers_lock = threading.Lock()
     @classmethod
-    def install_watcher(cls, addr, handler, interval : int = 2, allow_multiple_watchers : bool = False, replace_existing : bool = True):
+    def install_watcher(cls, addr, handler, interval : int = 2, allow_multiple_watchers : bool = False, replace_existing : bool = True, verbose = False):
         """
         Install a watcher to monitor the health of each client regularly.
 
@@ -1063,7 +1063,7 @@ class Client:
                 while not stop.is_set():
                     health_of_clients = client._health_of_clients()
                     for cid, (is_live, errors) in health_of_clients.items():
-                        if not is_live or errors:
+                        if verbose or not is_live or errors:
                             handler(cid, (is_live, errors))
                     bads = None
                     for cid, cc in cls.clients.items():
