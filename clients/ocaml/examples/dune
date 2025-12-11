@@ -1,0 +1,5 @@
+(executables
+ (names basic_usage example_eval example_lex example_rollback
+        example_pretty_unicode example_context example_plugin
+        test_connection simple_test)
+ (libraries isa_repl))

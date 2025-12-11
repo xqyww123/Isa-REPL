@@ -514,7 +514,6 @@ class Client:
         This conversion just intends to explain the meaning of each data field,
         and convert the data into an easy-to-understand form.
         """
-        self._chk_live()
         if data[0] is None:
             outputs = None
         else:

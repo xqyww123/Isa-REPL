@@ -1,0 +1,4 @@
+(library
+ (name isa_repl)
+ (public_name isa_repl)
+ (libraries unix re str msgpck))
