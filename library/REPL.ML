@@ -443,17 +443,31 @@ fun is_theory_tok tok = Token.is_kind Token.Command tok andalso Token.content_of
 val loader_locker = Synchronized.var "REPL theory loader locker" ()
 
 fun thy_loader import_dir thy_qualifier targets_str =
-  let val cwd = Synchronized.change_result loader_locker (fn () =>
-                    (OS.FileSys.getDir (), ()))
-      val targets = map (Resources.import_name thy_qualifier (the_default Path.root import_dir))
-                        targets_str
-      val evaluated_theories = the_default Symtab.empty (Thread_Data.get evaluated_theories)
-      val can_load = Execution.is_running Document_ID.none
+  let val evaluated_theories = the_default Symtab.empty (Thread_Data.get evaluated_theories)
       fun is_loaded import =
           Symtab.defined evaluated_theories import orelse
           is_some (Thy_Info.lookup_theory import) orelse
           Symtab.defined (Synchronized.value global_theories) import
-
+      val targets = map (Resources.import_name thy_qualifier (the_default Path.root import_dir))
+                        targets_str
+      fun load' import =
+        case Symtab.lookup evaluated_theories import
+          of SOME thy => thy
+           | NONE     => (
+        case Thy_Info.lookup_theory import
+          of SOME thy => thy
+           | NONE     =>
+        case Symtab.lookup (Synchronized.value global_theories) import
+          of SOME thy => thy
+           | NONE =>
+         raise REPL_fail ("Bad theory import " ^ import)
+        )
+   in if forall (is_loaded o #theory_name) targets
+      then map (load' o #theory_name) targets
+      else let
+      val cwd = Synchronized.change_result loader_locker (fn () =>
+                    (OS.FileSys.getDir (), ()))
+      val can_load = Execution.is_running Document_ID.none
 
       (*TODO: queue things to load and then process them together*)
       val _ = Synchronized.change loader_locker (fn () =>
@@ -483,19 +497,8 @@ fun thy_loader import_dir thy_qualifier targets_str =
             (* seg_load targets *)
         end)
 
-      fun load' import =
-        case Symtab.lookup evaluated_theories import
-          of SOME thy => thy
-           | NONE     => (
-        case Thy_Info.lookup_theory import
-          of SOME thy => thy
-           | NONE     =>
-        case Symtab.lookup (Synchronized.value global_theories) import
-          of SOME thy => thy
-           | NONE =>
-         raise REPL_fail ("Bad theory import " ^ import)
-        )
    in map (load' o #theory_name) targets
+  end
   end
 
 fun add_evaluated_theories entry =
