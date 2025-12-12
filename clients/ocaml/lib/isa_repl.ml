@@ -11,7 +11,7 @@ module Msgpck = Msgpck
 type position = Position.t
 type client = Client.t
 
-exception REPLFail of string
+exception REPLFail = Exceptions.REPLFail
 
 (** Client operations *)
 let create = Client.create

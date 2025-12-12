@@ -88,7 +88,15 @@ module Client : sig
   }
 
   (** Client connection *)
-  type t
+  type t = {
+    addr : string;
+    sock : Unix.file_descr;
+    cin : in_channel;
+    cout : out_channel;
+    pid : int;
+    client_id : int;
+    mutable closed : bool;
+  }
 
   (** {2 Connection Management} *)
 
