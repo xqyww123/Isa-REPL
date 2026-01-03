@@ -12,4 +12,20 @@ ML_file \<open>library/REPL_serializer.ML\<close>
 ML_file \<open>library/REPL_aux.ML\<close>
 ML_file \<open>library/Server.ML\<close>
 
+(*
+ML \<open>REPL_Serialize.string_of_term "T4S4" (Context.Proof \<^context>) (Thm.prop_of @{thm allI})\<close>
+
+
+
+ML \<open>REPL_Serialize.print_term {all_typ=true, bv_typ=true, constant_typ=true,
+        free_typ=true, num_typ=true, sorting=true, show_type_P=SOME 0.4, show_sort_P=SOME 0.5}
+    \<^context> (Thm.prop_of @{thm allI}) \<close>
+
+ML \<open>Random.random ()\<close>
+ML \<open>Time.now ()\<close>
+ML \<open>fun rmod x y = x - y * Real.realFloor (x / y);\<close> 
+
+ML \<open>Random.random ()\<close>
+*)
+
 end

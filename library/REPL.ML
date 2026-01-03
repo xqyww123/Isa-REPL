@@ -96,10 +96,6 @@ val retrieve_fact : string -> Proof.context * thm list
 
 val trim_makrup  : string -> string
 
-type printing_config = {all_typ: bool, bv_typ: bool, constant_typ: bool, free_typ: bool, num_typ: bool, sorting: bool}
-val print_term   : printing_config -> Proof.context -> term -> string
-val print_typ    : printing_config -> Proof.context -> typ  -> string
-
 val sledgehammer : int (*timeout in seconds*) -> string
 
 val premise_selection_each_goal : Sledgehammer_Prover.params ->
@@ -166,128 +162,6 @@ fun trim_makrup msg =
         | auto false (_ :: L) = auto false L
    in String.implode (auto true (String.explode msg))
   end
-
-type printing_config = {all_typ: bool, bv_typ: bool, constant_typ: bool, free_typ: bool, num_typ: bool, sorting: bool}
-exception XML_DUMP_FAIL of XML.tree
-
-fun is_number s =
-  if s = "."
-  then false
-  else let
-      val len = String.size s
-      val i = Unsynchronized.ref 0
-      val ret = Unsynchronized.ref true
-   in while !ret andalso !i < len do
-        let val c = String.sub (s, !i)
-         in ( if c = #"." orelse c = #"-" orelse c = #"~" orelse Char.isDigit c
-            then ()
-            else ret := false )
-          ; i := !i + 1
-        end
-     ; !ret
-  end
-
-fun print_xml {bv_typ, num_typ, free_typ, constant_typ, all_typ, sorting} xml =
-  let val bv_typ = bv_typ orelse all_typ
-      val num_typ = num_typ orelse all_typ
-      val free_typ = free_typ orelse all_typ
-      val constant_typ = constant_typ orelse all_typ
-
-      open XML
-      type ty = tree
-      datatype IR = TEXT of string
-                  | TYPING of ty * IR list
-                  | SORTING of ty * IR list
-                  | NUMBER of string
-                  | FREE of string
-                  | BOUND of string
-                  | CONSTANT of {name: string, full_name: string}
-                  | CLASS of {name: string, full_name: string}
-                  | TYPE  of {name: string, full_name: string}
-
-      fun one_str (Elem (("block", _), [x])) = one_str x
-        | one_str (Elem (("delimiter", _), [x])) = one_str x
-        | one_str (Elem (("literal", _), [x])) = one_str x
-        | one_str (Text s) = s
-        | one_str x = raise XML_DUMP_FAIL x
-
-      val lookup = AList.lookup (op =)
-      val lookup' = the_default "" oo lookup
-      fun dump_xml (Text s) ret = 
-            if is_number s
-            then NUMBER s :: ret
-            else TEXT s :: ret
-        | dump_xml (Elem (("break", _), _)) ret = TEXT " " :: ret
-        | dump_xml (Elem (("tfree", _), [x])) ret = FREE (one_str x) :: ret
-        | dump_xml (Elem (("free", _), [x])) ret = FREE (one_str x) :: ret
-        | dump_xml (Elem (("bound", _), [x])) ret = BOUND (one_str x) :: ret
-        | dump_xml (origin as Elem (("entity", attrs), [x])) ret =
-           (case lookup attrs "kind"
-              of SOME "class" => CLASS {name = one_str x, full_name = lookup' attrs "name"}
-               | SOME "constant" =>
-                    let val name = one_str x
-                     in case name
-                     of "0" => NUMBER "0"
-                      | "1" => NUMBER "1"
-                      | _ => CONSTANT {name = name, full_name = lookup' attrs "name"}
-                    end
-               | SOME "type_name" => TYPE {name = one_str x, full_name = lookup' attrs "name"}
-               | _ => raise XML_DUMP_FAIL origin
-           ) :: ret
-        | dump_xml (Elem (("xml_elem", [("xml_name", "typing")]), [typ, term])) ret =
-            TYPING (typ, dump_xml term []) :: ret
-        | dump_xml (Elem (("xml_elem", [("xml_name", "sorting")]), [typ, term])) ret =
-            SORTING (typ, dump_xml term []) :: ret
-        | dump_xml (Elem (_, children)) ret = fold dump_xml children ret
-
-      fun dump_ir ir =
-        let fun pass [] ret = ret
-              | pass (TYPING (ty, [NUMBER tm]) :: oth) ret =
-                  if num_typ then "(" :: tm :: " :: " :: dump_ir (dump_xml ty []) @ ")"
-                               :: pass oth ret
-                             else tm :: pass oth ret
-              | pass (TYPING (ty, [FREE tm]) :: oth) ret =
-                  if free_typ
-                  then "(" :: tm :: " :: " :: dump_ir (dump_xml ty []) @ ")"
-                    :: pass oth ret
-                  else tm :: pass oth ret
-              | pass (TYPING (ty, [CONSTANT {name, ...}]) :: oth) ret =
-                  if constant_typ
-                  then "(" :: name :: " :: " :: dump_ir (dump_xml ty []) @ ")"
-                    :: pass oth ret
-                  else name :: pass oth ret
-              | pass (TYPING (ty, [BOUND tm]) :: CONSTANT {name=".",...} :: oth) ret =
-                  if bv_typ then "(" :: tm :: " :: " :: dump_ir (dump_xml ty []) @ ")."
-                              :: pass oth ret
-                            else tm :: "." :: pass oth ret
-              | pass (TYPING (ty, [BOUND tm]) :: TEXT "." :: oth) ret =
-                  if bv_typ then "(" :: tm :: " :: " :: dump_ir (dump_xml ty []) @ ")."
-                              :: pass oth ret
-                            else tm :: "." :: pass oth ret
-              | pass (TEXT s :: oth) ret = s :: pass oth ret
-              | pass (TYPING (ty, tm) :: oth) ret =
-                  if all_typ then "(" :: pass tm [] @ " :: " :: dump_ir (dump_xml ty []) @ ")"
-                               :: pass oth ret
-                             else pass (tm @ oth) ret
-              | pass (SORTING (s, tm) :: oth) ret =
-                  if sorting then "(" :: pass tm [] @ " :: " :: dump_ir (dump_xml s []) @ ")"
-                               :: pass oth ret
-                             else pass (tm @ oth) ret
-              | pass (NUMBER s :: oth) ret = s :: pass oth ret
-              | pass (FREE s :: oth) ret = s :: pass oth ret
-              | pass (BOUND s :: oth) ret = s :: pass oth ret
-              | pass (CONSTANT {name, ...} :: oth) ret = name :: pass oth ret
-              | pass (CLASS {name, ...} :: oth) ret = name :: pass oth ret
-              | pass (TYPE {name, ...} :: oth) ret = name :: pass oth ret
-         in pass (rev ir) []
-        end
-(*      and dump_str tree = dump_ir (rev (dump_xml tree)) *)
-   in String.concat (dump_ir (dump_xml xml []))
-  end
-
-fun print_term cfg ctxt term = print_xml cfg (YXML.parse (Syntax.string_of_term ctxt term))
-fun print_typ  cfg ctxt term = print_xml cfg (YXML.parse (Syntax.string_of_typ  ctxt term))
-
 
 (** Types **)
 
