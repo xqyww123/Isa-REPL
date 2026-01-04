@@ -381,6 +381,40 @@ fun string_of_term "sexpr" = (fn _ => s_expression)
        #> REPL.trim_makrup
       end
       end
+  | string_of_term "T2S3" =
+      let val rand = random ()
+       in fn ctxt =>
+      let val show_type = rand () <= 0.2
+          val show_sort = show_type andalso rand () <= 0.3
+          val ctxt = ctxt
+                |> Config.put_generic Printer.show_types show_type
+                |> Config.put_generic Printer.show_sorts show_sort
+                |> Config.put_generic Printer.show_types_nv false
+                |> Config.put_generic Printer.show_markup false
+                |> Config.put_generic Printer.show_structs false
+                |> Config.put_generic Printer.show_question_marks true
+                |> Config.put_generic Printer.show_brackets false
+       in Context.cases Syntax.string_of_term_global Syntax.string_of_term ctxt
+       #> REPL.trim_makrup
+      end
+      end
+  | string_of_term "T2S3nv" =
+      let val rand = random ()
+       in fn ctxt =>
+      let val show_type = rand () <= 0.2
+          val show_sort = show_type andalso rand () <= 0.3
+          val ctxt = ctxt
+                |> Config.put_generic Printer.show_types show_type
+                |> Config.put_generic Printer.show_sorts show_sort
+                |> Config.put_generic Printer.show_types_nv show_type
+                |> Config.put_generic Printer.show_markup false
+                |> Config.put_generic Printer.show_structs false
+                |> Config.put_generic Printer.show_question_marks true
+                |> Config.put_generic Printer.show_brackets false
+       in Context.cases Syntax.string_of_term_global Syntax.string_of_term ctxt
+       #> REPL.trim_makrup
+      end
+      end
   | string_of_term name = (fn _ =>
       raise REPL_fail ("Unknown term printer " ^ name
               ^ ". Unknown printers: ['sexpr', 'pretty', 'typed_pretty']"))
