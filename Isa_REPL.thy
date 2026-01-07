@@ -13,6 +13,16 @@ ML_file \<open>library/REPL_aux.ML\<close>
 ML_file \<open>library/Server.ML\<close>
 
 (*
+ML \<open>Symbol_Pos.explode ("asdasd", Position.none)
+  |> Vector.fromList
+             |> Vector.map fst
+  |> (fn src => Vector.sub (src, 1))
+\<close>
+ML \<open>\<^here>\<close>
+
+ML \<open>REPL_Aux.ascii_offset_of_pos "\n\naadsas" 3\<close> *)
+
+(*
 ML \<open>REPL_Serialize.string_of_term "T4S4" (Context.Proof \<^context>) (Thm.prop_of @{thm allI})\<close>
 
 

@@ -12,6 +12,7 @@ val session_theory_infos :
 val parse_thy_header : Path.T -> Thy_Header.header list
 
 val column_of_pos : string -> (Position.T -> int * int) * (Position.T -> Position.T)
+val ascii_offset_of_pos : string -> int -> int
 
 end
 
@@ -336,6 +337,18 @@ fun column_of_pos src =
         end
    in (of_pos, translate_pos)
   end 
+
+fun ascii_offset_of_pos src offset =
+  let val ofs  = Unsynchronized.ref 1
+      val ofs_a  = Unsynchronized.ref 0
+      val src = Symbol_Pos.explode (src, Position.none)
+             |> Vector.fromList
+             |> Vector.map fst
+   in while !ofs < offset do (
+        ofs_a := !ofs_a + size (Vector.sub (src, !ofs - 1))
+      ; ofs := !ofs + 1
+    ) ; !ofs_a
+  end
 
 end
 
