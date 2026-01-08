@@ -37,7 +37,8 @@ type command_output = {
         level  : int,
         state  : string,
         plugin_output: (plugin_name * MessagePackBinIO.Pack.raw_packer) list,
-        errors : string list
+        errors : string list,
+        range   : Position.T * Position.T
 }
 type command_outputs = {
         outputs: command_output list option,
@@ -203,7 +204,8 @@ type command_output = {
         level   : int,
         state   : string,
         plugin_output: (plugin_name * MessagePackBinIO.Pack.raw_packer) list,
-        errors  : string list
+        errors  : string list,
+        range   : Position.T * Position.T
 }
 type command_outputs = {
         outputs: command_output list option,
@@ -501,7 +503,7 @@ fun set_register_thy v =
      | SOME (s,c,(tr,_),H) => Thread_Data.put state (SOME (s, c, (tr, v), H))
 
 val trim_err = map (trim_makrup o #2 o #1)
-fun catch_state' wid plugin_output err command s : command_output = {
+fun catch_state' wid plugin_output err command range s : command_output = {
         command_name = command,
         output  = get_and_clean_message' wid,
         latex   = NONE (*Toplevel.output_of s*),
@@ -516,7 +518,8 @@ fun catch_state' wid plugin_output err command s : command_output = {
         level   = Toplevel.level s,
         state   = trim_makrup (Toplevel.string_of_state s),
         plugin_output = plugin_output,
-        errors  = trim_err err
+        errors  = trim_err err,
+        range   = range
     }
 
 fun apply_single_cmd_timeout (Command_Span.Span (Command_Span.Command_Span (name, _), toks)) =
@@ -524,6 +527,20 @@ fun apply_single_cmd_timeout (Command_Span.Span (Command_Span.Command_Span (name
        in not (member (op =) bad name) andalso
           not (exists (fn tok => member (op =) bad (Token.content_of tok)) toks)
       end
+
+fun last [] = error "no last"
+  | last [x] = x
+  | last (_ :: L) = last L
+
+fun end_pos_of shift pos =
+  Position.make {
+    line = the_default 0 (Position.line_of pos),
+    offset = the_default 1 (Position.end_offset_of pos) - 1 + shift,
+    end_offset = the_default 1 (Position.end_offset_of pos) + shift,
+    props= { label = the_default "" (Position.label_of pos),
+             file = the_default "" (Position.file_of pos),
+             id = the_default "" (Position.id_of pos) }
+  }
 
 fun RE (cfg:cfg) source : command_outputs =
   case Thread_Data.get state
@@ -541,10 +558,13 @@ fun RE (cfg:cfg) source : command_outputs =
       val srcs = Symbol_Pos.explode (source, pos)
               |> split_thy_headers
 
-      fun catch_state plugin_output err tr s : command_output
-        = catch_state' wid plugin_output err (Toplevel.name_of tr) s
+      fun range_of (Command_Span.Span (_, toks)) =
+          case toks of [] => (Position.none, Position.none)
+                     | _ => (Token.pos_of (hd toks), end_pos_of 0 (Token.pos_of (last toks)))
+      fun catch_state plugin_output err tr cmd s : command_output
+        = catch_state' wid plugin_output err (Toplevel.name_of tr) (range_of cmd) s
 
-      fun err_state err tr s : command_output = {
+      fun err_state err tr cmd s : command_output = {
               command_name = Toplevel.name_of tr,
               output  = [],
               latex   = NONE,
@@ -559,7 +579,8 @@ fun RE (cfg:cfg) source : command_outputs =
               level   = Toplevel.level s,
               state   = "",
               plugin_output = [],
-              errors  = trim_err err
+              errors  = trim_err err,
+              range   = range_of cmd
           }
 
       fun mk_command_outputs a b = {outputs = if trace then SOME (rev a) else NONE, error=b} : command_outputs
@@ -589,7 +610,7 @@ fun RE (cfg:cfg) source : command_outputs =
                                  of [] => "Some error happens. Details may be given in the field `outputs.errors.` \
                                           \See the document for Python client's `boring_parse` method. "
                                   | Er => String.concatWith "\n\n" Er
-                   in (mk_command_outputs (if trace then err_state err tr s::ret else [])
+                   in (mk_command_outputs (if trace then err_state err tr current_cmd s::ret else [])
                                           (SOME Er), s0)
                   end
                | (err, SOME s'0) =>
@@ -609,7 +630,7 @@ fun RE (cfg:cfg) source : command_outputs =
                                end
                               else ()
                             else ()
-                 in loop (if trace then (catch_state plugin_output err tr s')::ret else [])
+                 in loop (if trace then (catch_state plugin_output err tr current_cmd s')::ret else [])
                          (trim_err err @ errs)
                          trs srcs s'
                 end
@@ -784,7 +805,7 @@ fun rollback_state cfg name =
                                      [],
                                      s')
     in Thread_Data.put state (SOME (s'', cnt, t, H))
-     ; catch_state' wid plugin_output [] "" s'
+     ; catch_state' wid plugin_output [] "" (Position.none, Position.none) s'
    end
 
 fun rollback_state_global cfg name store =
@@ -805,7 +826,7 @@ fun rollback_state_global cfg name store =
                                      [],
                                      s')
     in Thread_Data.put state (SOME (s'', cnt, t, H))
-     ; catch_state' wid plugin_output [] "" s'
+     ; catch_state' wid plugin_output [] "" (Position.none, Position.none) s'
    end
 
 fun list_states () =
@@ -825,7 +846,7 @@ fun list_states' cfg () =
                                         (Command_Span.Command_Span ("<list>", Position.none), []),
                                      [],
                                      s')
-          )) [] "" s'
+          )) [] "" (Position.none, Position.none) s'
        )) H
 
 (** Parser **)

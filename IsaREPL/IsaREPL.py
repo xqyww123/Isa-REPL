@@ -3,6 +3,8 @@ import socket
 import os
 import signal
 from collections import namedtuple
+from typing import Callable
+from enum import IntEnum
 import re
 import threading
 import time
@@ -98,17 +100,77 @@ SUBSUP_RESTORE_TABLE = {
 
 SUBSUP_RESTORE_TABLE_trans = str.maketrans(SUBSUP_RESTORE_TABLE)
 
+class IsabellePosition:
+    def __init__(self, line : int, raw_offset : int, file : str):
+        self.line = line
+        self.raw_offset = raw_offset
+        self.file = file
+
+    def __str__(self):
+        return f"{self.file}:{self.line}:{self.raw_offset}"
+
+    def __repr__(self):
+        return self.__str__()
+
+    def __eq__(self, other):
+        if not isinstance(other, IsabellePosition):
+            return False
+        return (self.line == other.line and 
+                self.raw_offset == other.raw_offset and 
+                self.file == other.file)
+
+    def __hash__(self):
+        return hash((self.line, self.raw_offset, self.file))
+
+    def __lt__(self, other):
+        if not isinstance(other, IsabellePosition):
+            return NotImplemented
+        return (self.file, self.line, self.raw_offset) < (other.file, other.line, other.raw_offset)
+
+    def __le__(self, other):
+        if not isinstance(other, IsabellePosition):
+            return NotImplemented
+        return (self.file, self.line, self.raw_offset) <= (other.file, other.line, other.raw_offset)
+
+    def __gt__(self, other):
+        if not isinstance(other, IsabellePosition):
+            return NotImplemented
+        return (self.file, self.line, self.raw_offset) > (other.file, other.line, other.raw_offset)
+
+    def __ge__(self, other):
+        if not isinstance(other, IsabellePosition):
+            return NotImplemented
+        return (self.file, self.line, self.raw_offset) >= (other.file, other.line, other.raw_offset)
+
+    @staticmethod
+    def from_s(position_str):
+        parts = position_str.split(':')
+        match parts:
+            case [file, line, raw_offset, _]:
+                return IsabellePosition(int(line), int(raw_offset), file)
+            case [file, line, raw_offset]:
+                return IsabellePosition(int(line), int(raw_offset), file)
+            case [file, line]:
+                return IsabellePosition(int(line), 0, file)
+            case [file]:
+                return IsabellePosition(0, 0, file)
+            case _:
+                raise ValueError("The string must be in the format: file:line:raw_offset")
+
 class Position:
-    def __init__(self, line, column, file):
+    def __init__(self, line : int, column : int, file : str):
         self.line = line
         self.column = column
         self.file = file
 
     def __str__(self):
-        return f"{self.file}:{self.line}:{self.column}"
+        if self.column == 0:
+            return f"{self.file}:{self.line}"
+        else:
+            return f"{self.file}:{self.line}:{self.column}"
 
     def __repr__(self):
-        return f"{self.file}:{self.line}:{self.column}"
+        return self.__str__()
 
     def __eq__(self, other):
         if not isinstance(other, Position):
@@ -158,18 +220,7 @@ class Position:
 def __unpack_position__(data):  
     line, offset, end_offset, tup3 = data
     label, file, id = tup3
-    return Position(line, offset, file)
-
-# There is a BUG! the position must be convretd from ML part.
-def __repair_positions__(data):
-    i = 0
-    for pos, src in data:
-        pos.column = i
-        for _, c in enumerate(src):
-            if c == '\n':
-                i = 0
-            else:
-                i += 1
+    return IsabellePosition(line, offset, file)
 
 def is_list_of_strings(lst):
     if lst and isinstance(lst, list):
@@ -178,12 +229,115 @@ def is_list_of_strings(lst):
         return False
 
 
+class MessageType(IntEnum):
+    """
+    Message type enumeration for Isabelle output messages.
+    
+    Values:
+        NORMAL: 0 - Normal outputs printed by Isabelle/ML `writeln`
+        TRACING: 1 - Tracing information printed by Isabelle/ML `tracing`
+        WARNING: 2 - Warning printed by Isabelle/ML `warning`
+    """
+    NORMAL = 0
+    TRACING = 1
+    WARNING = 2
+
+
+class CommandFlags:
+    """
+    Boolean flags indicating the state of the Isabelle session.
+    
+    Attributes:
+        is_toplevel: Whether the Isabelle state is outside any theory block
+        is_theory: Whether the state is within a theory block and at the toplevel of this block
+        is_proof: Whether the state is working on proving some goal
+        has_goal: Whether the state has some goal to prove, or all goals are proven
+    """
+    def __init__(self, is_toplevel: bool, is_theory: bool, is_proof: bool, has_goal: bool):
+        self.is_toplevel = is_toplevel
+        self.is_theory = is_theory
+        self.is_proof = is_proof
+        self.has_goal = has_goal
+    
+    def __repr__(self):
+        return f"CommandFlags(is_toplevel={self.is_toplevel}, is_theory={self.is_theory}, is_proof={self.is_proof}, has_goal={self.has_goal})"
+
+
+class CommandOutput:
+    """
+    Represents the output from evaluating a single Isabelle command.
+    
+    Attributes:
+        command_name: The name of the command
+        range: A tuple of (begin_pos, end_pos) indicating the range of the command,
+               where each position is an IsabellePosition
+        output: A list of (MessageType, str) tuples (the same output in Isabelle's output panel)
+        latex: LaTeX output
+        flags: Flags about the Isabelle state after executing the command
+        level: The level of nesting context (an integer)
+        state: The proof state as a string (the same content in the `State` panel)
+        plugin_output: The output of plugins
+        errors: A list of strings containing any errors raised during evaluating this command
+    """
+    def __init__(self, command_name: str, range: tuple, output: list, latex, flags: CommandFlags,
+                 level: int, state: str, plugin_output, errors: list):
+        self.command_name = command_name
+        self.range = range
+        self.output = output
+        self.latex = latex
+        self.flags = flags
+        self.level = level
+        self.state = state
+        self.plugin_output = plugin_output
+        self.errors = errors
+    
+    @classmethod
+    def parse(cls, output):
+        """
+        Parse raw output data from Isabelle REPL into a CommandOutput instance.
+        
+        Args:
+            output: Raw output data from Isabelle REPL (a list/tuple with specific structure)
+        
+        Returns:
+            CommandOutput: A parsed CommandOutput instance
+        """
+        begin_pos, end_pos = output[8]
+        # Parse output messages as (MessageType, str) tuples
+        output_messages = [(MessageType(msg[0]), msg[1]) for msg in output[1]]
+        # Parse flags
+        flags = CommandFlags(
+            is_toplevel=output[3][0],
+            is_theory=output[3][1],
+            is_proof=output[3][2],
+            has_goal=output[3][3]
+        )
+        # Create and return CommandOutput instance
+        return cls(
+            command_name=output[0],
+            range=(__unpack_position__(begin_pos), __unpack_position__(end_pos)),
+            output=output_messages,
+            latex=output[2],
+            flags=flags,
+            level=output[4],
+            state=output[5],
+            plugin_output=output[6],
+            errors=output[7]
+        )
+    
+    def __repr__(self):
+        return (f"CommandOutput(command_name={repr(self.command_name)}, "
+                f"range={self.range}, output={self.output}, latex={repr(self.latex)}, "
+                f"flags={self.flags}, level={self.level}, state={repr(self.state)}, "
+                f"plugin_output={repr(self.plugin_output)}, errors={self.errors})")
+
+
 class Client:
     """
     A client for connecting Isabelle REPL
     """
 
-    VERSION = '0.13.0'
+    VERSION = '0.14.0'
     clients = {} # from client_id to Client instance
 
     def __init__(self, addr, thy_qualifier, timeout=3600):
@@ -474,65 +628,11 @@ class Client:
         self.cout.flush()
         Client._parse_control_(self.unpack.unpack())
 
-    def parse_output(output):
-        return {
-            'command_name': output[0],
-            'output': [{  # The same output in Isabelle's output panel.
-                # A list of messages.
-                'type': msg[0],  # The type is an integer, which can be
-                # 0 meaning NORMAL outputs printed by Isabelle/ML `writln`,
-                #       which denotes usual outputs;
-                # 1 meaning TRACING information printed by Isabelle/ML `tracing`,
-                #       which is trivial messages used usually for debugging;
-                # 2 meaning WARNING printed by Isabelle/ML `warning`,
-                #       which is some warning message.
-                'content': msg[1]  # A string, the output
-            } for msg in output[1]],
-            'latex': output[2],
-            'flags': [{  # some Boolean flags.
-                'is_toplevel': output[3][0],  # whether the Isabelle state is outside any theory block
-                # (the `theory XX imports AA begin ... end` block)
-                'is_theory': output[3][1],  # whether the state is within a theory block and at the
-                # toplevel of this block
-                'is_proof': output[3][2],  # whether the state is working on proving some goal
-                'has_goal': output[3][3]  # whether the state has some goal to prove, or all goals are proven
-            }],
-            'level': output[4],  # The level of nesting context. It is some internal measure
-            # and doesn't necessarily (but still roughly) reflect the
-            # hiearchies of source code.
-            # An integer.
-            'state': output[5],  # the proof state as a string (the same content in the `State` pannel)
-            # A string.
-            'plugin_output': output[6],  # the output of plugins
-            'errors': output[7]  # any errors raised during evaluating this single command.
-            # A list of strings.
-        }
-
-    def boring_parse(data):
-        """
-        I am boring because I just convert the form of the data representation.
-        This conversion just intends to explain the meaning of each data field,
-        and convert the data into an easy-to-understand form.
-        """
-        if data[0] is None:
-            outputs = None
-        else:
-            outputs = [Client.parse_output(output) for output in data[0]]
-        return {
-            'outputs': outputs,  # A sequence of outputs each of which corresponds to one command.
-            'error': data[1]  # Either None or a string,
-            # any error that interrtupts the evaluation process, causing the
-            # later commands not executed.
-            #
-            # **No** error happens during the evaluation, **if and only if** this field is None.
-            # However, if some error happens, this field may not provide all details.
-            # Instead, the details can be given in `outputs['errors']`.
-        }
 
     def silly_eval(self, source):
         self._chk_live()
-        ret = self.eval(source)
-        return Client.boring_parse(ret)
+        ret = Client._parse_control_(self.eval(source))
+        return [CommandOutput.parse(output) for output in ret[0]]
 
     def record_state(self, name):
         """
@@ -560,7 +660,6 @@ class Client:
         """
         Rollback to a recorded evaluation state named `name`.
         This method returns a description about the state just restored.
-        This description can be parsed by `Client.parse_output`.
         However, the `command_name` fielld will be always an empty string,
         `output` be an empty list, and `latex` be NONE, because no command is executed.
         """
@@ -570,70 +669,22 @@ class Client:
         mp.pack("\x05rollback", self.cout)
         mp.pack(name, self.cout)
         self.cout.flush()
-        return Client._parse_control_(self.unpack.unpack())
+        ret = Client._parse_control_(self.unpack.unpack())
+        return CommandOutput.parse(ret)
 
-    def history(self):
+    def history(self) -> dict[str, CommandOutput]:
         """
         Returns the names of all recorded states
         This method returns descriptions about all the recorded states.
-        These descriptions can be parsed by `Client.parse_output`.
         However, the `command_name` fielld will be always an empty string,
         `output` be an empty list, and `latex` be NONE, because no command is executed.
         """
         self._chk_live()
         mp.pack("\x05history", self.cout)
         self.cout.flush()
-        return Client._parse_control_(self.unpack.unpack())
+        ret = Client._parse_control_(self.unpack.unpack())
+        return {k: CommandOutput.parse(v) for k, v in ret.items()}
 
-    def silly_rollback(self, name):
-        return Client.parse_output(self.rollback(name))
-
-    def silly_history(self):
-        return {k: Client.parse_output(v) for k, v in self.history().items()}
-
-    def sexpr_term (self, term):
-        """
-        Parse a term and translate it into S-expression that reveals the full names
-        of all overloaded notations.
-        This interface can be called only under certain theory context, meaning you
-        must have evaluated certain code like `theory THY imports Main begin` using
-        the `eval` interface.
-        """
-        self._chk_live()
-        if not isinstance(term, str):
-            raise ValueError("the argument term must be a string")
-        mp.pack ("\x05sexpr_term", self.cout)
-        mp.pack (term, self.cout)
-        self.cout.flush()
-        return Client._parse_control_ (self.unpack.unpack())
-
-    def fact (self, names):
-        """
-        Retreive a fact like a lemma, a theorem, or a corollary.
-        The argument `names` has the same syntax with the argument of Isabelle command `thm`.
-        Attributes are allowed, e.g., `HOL.simp_thms(1)[symmetric]`
-        Names must be separated by space, e.g., `HOL.simp_thms conj_cong[symmetric] conjI`
-        A list of pretty-printed string of the facts will be returned in the same order of the names.
-        """
-        self._chk_live()
-        if not isinstance(names, str):
-            raise ValueError("the argument term must be a string")
-        mp.pack ("\x05fact", self.cout)
-        mp.pack (names, self.cout)
-        self.cout.flush()
-        return Client._parse_control_ (self.unpack.unpack())
-
-    def sexpr_fact (self, names):
-        """
-        Similar with `fact` but returns the S-expressions of the terms of the facts.
-        """
-        self._chk_live()
-        if not isinstance(names, str):
-            raise ValueError("the argument term must be a string")
-        mp.pack ("\x05sexpr_fact", self.cout)
-        mp.pack (names, self.cout)
-        self.cout.flush()
-        return Client._parse_control_ (self.unpack.unpack())
 
     def hammer (self, timeout):
         """
@@ -693,8 +744,8 @@ class Client:
         self.cout.flush()
         return Client._parse_control_(self.unpack.unpack())
 
+    @staticmethod
     def parse_ctxt(raw):
-        self._chk_live()
         return {
             'local_facts': raw[0],
             'assumptions': raw[1],
@@ -998,6 +1049,59 @@ class Client:
         mp.pack(theory_line, self.cout)
         self.cout.flush()
         return Client._parse_control_(self.unpack.unpack())
+    
+    def translate_position(self, src : str) -> Callable[[int | IsabellePosition], int | Position]:
+        if not isinstance(src, str):
+            raise ValueError("the argument `src` must be a string")
+        mp.pack("\x05symbpos", self.cout)
+        self.cout.flush()
+        symbs = Client._parse_control_(self.unpack.unpack())
+        
+        # Implementation of column_of_pos functionality from SML
+        # symbs is a list of strings (symbols), equivalent to Vector.map fst (Symbol_Pos.explode ...)
+        # In SML, vectors are 1-indexed, but Python lists are 0-indexed
+        ofs = 1
+        line = 1
+        colm = 0
+        
+        def calc(offset):
+            nonlocal ofs, line, colm
+            """Calculate line and column for a given offset (1-based)"""
+            # offset corresponds to Position.offset_of pos
+            # In Isabelle, symbol indices correspond to character offsets
+            if offset < ofs:
+                # Reset if we need to go backwards
+                ofs = 1
+                line = 1
+                colm = 0
+            
+            # Walk through symbols until we reach the target offset
+            # ofs is 1-based index, so we subtract 1 to access Python list
+            while ofs < offset:
+                idx = ofs - 1  # convert to 0-based index for Python list
+                if idx < len(symbs):
+                    s = symbs[idx]
+                    if s == "\n":
+                        line += 1
+                        ofs += 1
+                        colm = 0
+                    else:
+                        ofs += 1
+                        colm += len(s)
+                else:
+                    break
+            return colm
+        
+        def translate(pos):
+            if isinstance(pos, int):
+                return calc(pos)
+            elif isinstance(pos, IsabellePosition):
+                column = calc(pos.raw_offset)
+                return Position(pos.line, column, pos.file)
+            else:
+                raise TypeError("`pos` must be either an IsabellePosition or an integer")
+        return translate
+
     
     def premise_selection(self, mode, number : int, methods : list[str], params : dict[str, str] = {}, printer : str='pretty'):
         """

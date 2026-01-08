@@ -297,7 +297,7 @@ fun startup base_dir_of_theories thy0 addr0 =
       let val (conn,sender) = Socket.accept socket
           val (cin, cout) = make_streams conn
           val (version, cin) = MessagePackBinIO.Unpack.doUnpack (MessagePackBinIO.Unpack.unpackString) cin
-          val _ = if version = "0.13.0" then ()
+          val _ = if version = "0.14.0" then ()
                   else if version = "heartbeat"
                   then \<^try>\<open> (
                        output cout MessagePackBinIO.Pack.packUnit ()
@@ -738,6 +738,12 @@ fun startup base_dir_of_theories thy0 addr0 =
                         in output cout (packPairList (packString, pp o Thm.prop_of)) ret
                        end
                              | _ => raise REPL.REPL_fail "bad argument 'mode'"
+                       end
+                  | "\005symbpos" => let
+                           val text = read unpackString
+                           val symbs = Symbol_Pos.explode (text, Position.none)
+                                    |> map fst
+                        in output cout (packList packString) symbs
                        end
                   | "\005clean_cache" => let
                         in Synchronized.change evaluation_cache (fn _ => (

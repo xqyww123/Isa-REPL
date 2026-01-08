@@ -17,6 +17,7 @@ val s_expr_typ : typ -> string list -> string list
 
 val term_packer : pp_name -> Context.generic -> term MessagePackBinIO.Pack.packer
 val typ_packer  : pp_name -> Context.generic -> typ  MessagePackBinIO.Pack.packer
+val pos_packer  : Position.T MessagePackBinIO.Pack.packer
 
 type printing_config = {
         all_typ: bool, bv_typ: bool, constant_typ: bool,
@@ -205,6 +206,13 @@ fun message_type_packer NORMAL  = packInt 0
 
 val message_packer = packPair (message_type_packer, packString)
 
+fun pos_packer pos =
+  let open MessagePackBinIO.Unpack MessagePackBinIO.Pack
+      val {line, offset, end_offset, props} = Position.dest pos
+      val {label, file, id} = props
+   in packTuple4 (packInt, packInt, packInt, packTuple3 (packString, packString, packString))
+      (line, offset, end_offset, (label, file, id))
+  end
 
 fun command_output_packer {
         command_name : string,
@@ -214,15 +222,17 @@ fun command_output_packer {
         level  : int,
         state  : string,
         plugin_output: (plugin_name * raw_packer) list,
-        errors : string list
-} = packTuple8 (packString,
+        errors : string list,
+        range  : Position.T * Position.T
+} = packTuple9 (packString,
                 packList message_packer,
                 packOption (packString o REPL.trim_makrup o YXML.string_of_body),
                 flags_packer,
                 packInt,
                 packString,
                 packPairList (packString, I),
-                packList packString)
+                packList packString,
+                packPair (pos_packer, pos_packer))
     (   command_name,
         output : message list, (*text printed in Isabelle's output panel*)
         latex  : Latex.text option, (*text, section, and other latex commands*)
@@ -230,7 +240,8 @@ fun command_output_packer {
         level  : int,
         state  : string,
         plugin_output: (plugin_name * raw_packer) list,
-        errors : string list    )
+        errors : string list,
+        range)
 
 
 type command_outputs = {
