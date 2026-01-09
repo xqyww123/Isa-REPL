@@ -30,7 +30,7 @@ type flags = {
         has_goal   : bool
 }
 type command_output = {
-        command_name : string,
+        command : string,
         output: message list,      (*text printed in Isabelle's output panel*)
         latex : Latex.text option, (*text, section, and other latex commands*)
         flags  : flags,
@@ -197,7 +197,7 @@ type plugin  = plugin_name * collector
 type plugins = plugin list
 
 type command_output = {
-        command_name : string,
+        command : string,
         output  : message list, (*text printed in Isabelle's output panel*)
         latex   : Latex.text option, (*text, section, and other latex commands*)
         flags   : flags,
@@ -521,7 +521,7 @@ fun set_register_thy v =
 
 val trim_err = map (trim_makrup o #2 o #1)
 fun catch_state' wid plugin_output err command range s : command_output = {
-        command_name = command,
+        command = command,
         output  = get_and_clean_message' wid,
         latex   = NONE (*Toplevel.output_of s*),
         flags   = {
@@ -559,6 +559,29 @@ fun end_pos_of shift pos =
              id = the_default "" (Position.id_of pos) }
   }
 
+fun print_toks [] = []
+  | print_toks toks =
+  let open Token Position
+      fun assmble _ [] = []
+        | assmble NONE (tok :: toks) =
+            let val pos  = pos_of tok
+             in case (line_of pos, end_offset_of pos)
+             of (SOME line, SOME ofst') =>
+                     " " :: unparse tok :: assmble (SOME (line, ofst')) toks
+              | _ => " " :: unparse tok :: assmble NONE toks
+            end
+        | assmble (SOME (line0, ofst0)) (tok :: toks) =
+            let val pos  = pos_of tok
+             in case (line_of pos, offset_of pos, end_offset_of pos)
+             of (SOME line, SOME ofst, SOME ofst') =>
+                  if line = line0 andalso ofst0 = ofst
+                  then unparse tok :: assmble (SOME (line, ofst')) toks
+                  else " " :: unparse tok :: assmble (SOME (line, ofst')) toks
+              | _ => " " :: unparse tok :: assmble NONE toks
+            end
+   in tl (assmble NONE toks)
+  end
+
 fun RE (cfg:cfg) source : command_outputs =
   case Thread_Data.get state
     of NONE                  => {outputs=NONE, error=SOME "INTERNAL ERROR: state lost"}
@@ -578,11 +601,12 @@ fun RE (cfg:cfg) source : command_outputs =
       fun range_of (Command_Span.Span (_, toks)) =
           case toks of [] => (Position.none, Position.none)
                      | _ => (Token.pos_of (hd toks), end_pos_of 0 (Token.pos_of (last toks)))
-      fun catch_state plugin_output err tr cmd s : command_output
-        = catch_state' wid plugin_output err (Toplevel.name_of tr) (range_of cmd) s
+      fun cmd_expr_of (Command_Span.Span (_, toks)) = print_toks toks |> String.concat
+      fun catch_state plugin_output err cmd s : command_output
+        = catch_state' wid plugin_output err (cmd_expr_of cmd) (range_of cmd) s
 
-      fun err_state err tr cmd s : command_output = {
-              command_name = Toplevel.name_of tr,
+      fun err_state err cmd s : command_output = {
+              command = cmd_expr_of cmd,
               output  = [],
               latex   = NONE,
               flags   = {
@@ -627,7 +651,7 @@ fun RE (cfg:cfg) source : command_outputs =
                                  of [] => "Some error happens. Details may be given in the field `outputs.errors.` \
                                           \See the document for Python client's `boring_parse` method. "
                                   | Er => String.concatWith "\n\n" Er
-                   in (mk_command_outputs (if trace then err_state err tr current_cmd s::ret else [])
+                   in (mk_command_outputs (if trace then err_state err current_cmd s::ret else [])
                                           (SOME Er), s0)
                   end
                | (err, SOME s'0) =>
@@ -647,7 +671,7 @@ fun RE (cfg:cfg) source : command_outputs =
                                end
                               else ()
                             else ()
-                 in loop (if trace then (catch_state plugin_output err tr current_cmd s')::ret else [])
+                 in loop (if trace then (catch_state plugin_output err current_cmd s')::ret else [])
                          (trim_err err @ errs)
                          trs srcs s'
                 end

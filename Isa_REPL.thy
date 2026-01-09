@@ -15,6 +15,26 @@ ML_file \<open>library/REPL_aux.ML\<close>
 ML_file \<open>library/Server.ML\<close>
 
 (*
+ML \<open>
+val master_dir = Path.explode "/home/user/current_theory_dir";
+  val target_name = "Auto_Sledgehammer.Auto_Sledgehammer";  (* or "HOL.List" or "MyTheory" *)
+  val qualifier = "Draft";
+
+  (* Parse the absolute path: *)
+  val {node_name, master_dir = target_master_dir, theory_name} =
+      Resources.import_name qualifier master_dir target_name;
+
+  (* node_name is the absolute path to the .thy file *)
+  writeln ("Theory file path: " ^ Path.implode node_name);
+  (* target_master_dir is the directory containing that file *)
+  writeln ("Master directory: " ^ Path.implode target_master_dir);
+  (* theory_name is the fully qualified theory name *)
+  writeln ("Theory name: " ^ theory_name);
+
+\<close>
+*)
+
+(*
 ML \<open>Symbol_Pos.explode ("asdasd", Position.none)
   |> Vector.fromList
              |> Vector.map fst

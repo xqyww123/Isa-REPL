@@ -215,7 +215,7 @@ fun pos_packer pos =
   end
 
 fun command_output_packer {
-        command_name : string,
+        command : string,
         output : message list, (*text printed in Isabelle's output panel*)
         latex  : Latex.text option, (*text, section, and other latex commands*)
         flags  : flags,
@@ -233,7 +233,7 @@ fun command_output_packer {
                 packPairList (packString, I),
                 packList packString,
                 packPair (pos_packer, pos_packer))
-    (   command_name,
+    (   command,
         output : message list, (*text printed in Isabelle's output panel*)
         latex  : Latex.text option, (*text, section, and other latex commands*)
         flags  : flags,

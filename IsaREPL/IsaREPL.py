@@ -281,7 +281,7 @@ class CommandOutput:
     Represents the output from evaluating a single Isabelle command.
     
     Attributes:
-        command_name: The name of the command
+        command: The name of the command
         range: A tuple of (begin_pos, end_pos) indicating the range of the command,
                where each position is an IsabellePosition
         output: A list of (MessageType, str) tuples (the same output in Isabelle's output panel)
@@ -292,9 +292,9 @@ class CommandOutput:
         plugin_output: The output of plugins
         errors: A list of strings containing any errors raised during evaluating this command
     """
-    def __init__(self, command_name: str, range: tuple, output: list, latex, flags: CommandFlags,
+    def __init__(self, command: str, range: tuple, output: list, latex, flags: CommandFlags,
                  level: int, state: str, plugin_output, errors: list):
-        self.command_name = command_name
+        self.command = command
         self.range = range
         self.output = output
         self.latex = latex
@@ -327,7 +327,7 @@ class CommandOutput:
         )
         # Create and return CommandOutput instance
         return cls(
-            command_name=output[0],
+            command=output[0],
             range=(__unpack_position__(begin_pos), __unpack_position__(end_pos)),
             output=output_messages,
             latex=output[2],
@@ -339,7 +339,7 @@ class CommandOutput:
         )
     
     def __repr__(self):
-        return (f"CommandOutput(command_name={repr(self.command_name)}, "
+        return (f"CommandOutput(command={repr(self.command)}, "
                 f"range={self.range}, output={self.output}, latex={repr(self.latex)}, "
                 f"flags={self.flags}, level={self.level}, state={repr(self.state)}, "
                 f"plugin_output={repr(self.plugin_output)}, errors={self.errors})")
@@ -444,7 +444,10 @@ class Client:
         if self.sock:
             self.sock.close()
             self.sock = None
-        del Client.clients[self.client_id]
+        try:
+            del Client.clients[self.client_id]
+        except:
+            pass
         try:
             Client.kill_client(self.addr, self.client_id)
         except:
