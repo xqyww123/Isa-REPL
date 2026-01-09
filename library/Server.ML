@@ -600,7 +600,15 @@ fun startup base_dir_of_theories thy0 addr0 =
                                       unpackOption unpackInt,
                                       unpackOption unpackString
                                   ))
-                           val cfg = { thy_qualifier = #thy_qualifier (!cfg),
+                           val session = case import_dir
+                                of SOME dir =>
+                                    let val path = Path.explode dir
+                                     in case REPL_Aux.parse_session_name path
+                                     of SOME s => s
+                                      | NONE => #thy_qualifier (!cfg)
+                                    end
+                                 | NONE => #thy_qualifier (!cfg)
+                           val cfg = { thy_qualifier = session,
                                        file = #file (!cfg),
                                        position_label = #position_label (!cfg),
                                        additional_libs = #additional_libs (!cfg),

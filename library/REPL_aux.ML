@@ -311,21 +311,23 @@ fun column_of_pos src =
              |> Vector.fromList
              |> Vector.map fst
       fun calc offset = (
-          if offset < !ofs then (ofs := 1; line := 1; colm := 0) else ()
+          if offset < !ofs then (ofs := 1; line := 1; colm := 1) else ()
         ; while !ofs < offset do
             let val s = Vector.sub (src, !ofs)
              in if s = "\n"
               then (line := !line + 1; ofs := !ofs + 1; colm := 0)
               else (ofs := !ofs + 1; colm := !colm + size s)
             end
+        ; let val s = Vector.sub (src, !ofs)
+           in if size s > 1
+            then !colm - size s + 1
+            else !colm
+          end
         )
       fun of_pos pos =
-        let val _ = calc (the (Position.offset_of pos))
-            val c0 = !colm
+        let val c0 = calc (the (Position.offset_of pos))
          in case Position.end_offset_of pos
-              of SOME x1 => (
-                    calc x1
-                  ; (c0, !colm) )
+              of SOME x1 => (c0, calc x1)
                | NONE => (c0, ~1)
         end
       fun translate_pos pos =

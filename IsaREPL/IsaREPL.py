@@ -437,6 +437,13 @@ class Client:
         except:
             pass
 
+    @staticmethod
+    def _parse_control_(ret):
+        if ret[1] is None:
+            return ret[0]
+        else:
+            raise REPLFail(ret[1])
+
     def eval(self, source, timeout=None, cmd_timeout=None, import_dir=None):
         """
         The `eval` method ONLY accepts **complete** commands ---
@@ -476,13 +483,8 @@ class Client:
             mp.pack("\x05eval", self.cout)
             mp.pack((source, timeout, cmd_timeout, import_dir), self.cout)
         self.cout.flush()
-        return self.unpack.unpack()
-
-    def _parse_control_(ret):
-        if ret[1] is None:
-            return ret[0]
-        else:
-            raise REPLFail(ret[1])
+        ret = Client._parse_control_(self.unpack.unpack())
+        return [CommandOutput.parse(output) for output in ret]
 
     def set_trace(self, trace):
         """
@@ -627,12 +629,6 @@ class Client:
         mp.pack(name, self.cout)
         self.cout.flush()
         Client._parse_control_(self.unpack.unpack())
-
-
-    def silly_eval(self, source):
-        self._chk_live()
-        ret = Client._parse_control_(self.eval(source))
-        return [CommandOutput.parse(output) for output in ret[0]]
 
     def record_state(self, name):
         """
@@ -1054,6 +1050,7 @@ class Client:
         if not isinstance(src, str):
             raise ValueError("the argument `src` must be a string")
         mp.pack("\x05symbpos", self.cout)
+        mp.pack(src, self.cout)
         self.cout.flush()
         symbs = Client._parse_control_(self.unpack.unpack())
         
@@ -1062,10 +1059,10 @@ class Client:
         # In SML, vectors are 1-indexed, but Python lists are 0-indexed
         ofs = 1
         line = 1
-        colm = 0
+        colm = 1
         
         def calc(offset):
-            nonlocal ofs, line, colm
+            nonlocal ofs, line, colm, symbs
             """Calculate line and column for a given offset (1-based)"""
             # offset corresponds to Position.offset_of pos
             # In Isabelle, symbol indices correspond to character offsets
@@ -1084,13 +1081,17 @@ class Client:
                     if s == "\n":
                         line += 1
                         ofs += 1
-                        colm = 0
+                        colm = 1
                     else:
                         ofs += 1
                         colm += len(s)
                 else:
                     break
-            return colm
+            s = symbs[ofs - 1]
+            if len(s) > 1:
+                return colm - len(s) + 1
+            else:
+                return colm
         
         def translate(pos):
             if isinstance(pos, int):

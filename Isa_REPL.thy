@@ -2,6 +2,8 @@ theory Isa_REPL
   imports Auto_Sledgehammer.Auto_Sledgehammer Main
 begin
 
+declare [[ML_debugger]]
+
 ML_file \<open>contrib/mlmsgpack/mlmsgpack-aux.sml\<close>
 ML_file \<open>contrib/mlmsgpack/realprinter-packreal.sml\<close>
 ML_file \<open>contrib/mlmsgpack/mlmsgpack.sml\<close>
@@ -18,9 +20,12 @@ ML \<open>Symbol_Pos.explode ("asdasd", Position.none)
              |> Vector.map fst
   |> (fn src => Vector.sub (src, 1))
 \<close>
-ML \<open>\<^here>\<close>
-
-ML \<open>REPL_Aux.ascii_offset_of_pos "\n\naadsas" 3\<close> *)
+ML \<open>
+\<^here>\<close>
+ 
+ML \<open>(REPL_Aux.column_of_pos "ML \<open>\nx\<close>" |> snd)
+        (Position.make0 2 6 1 "" "" "")\<close>
+*)
 
 (*
 ML \<open>REPL_Serialize.string_of_term "T4S4" (Context.Proof \<^context>) (Thm.prop_of @{thm allI})\<close>
