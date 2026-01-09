@@ -162,6 +162,12 @@ class Position:
         self.line = line
         self.column = column
         self.file = file
+    
+    def to_s(self, with_column=True):
+        if with_column:
+            return self.__str__()
+        else:
+            return f"{self.file}:{self.line}"
 
     def __str__(self):
         if self.column == 0:
@@ -216,6 +222,13 @@ class Position:
                 return Position(0, 0, file)
             case _:
                 raise ValueError("The string must be in the format: file:line:column")
+    
+    def offset_of(self, lines=None):
+        if lines is None:
+            with open(self.file, 'r', encoding="latin-1") as f:
+                lines = f.readlines()
+        base_ofs = sum(len(line) for line in lines[:self.line-1])
+        return base_ofs + self.column - 1
 
 def __unpack_position__(data):  
     line, offset, end_offset, tup3 = data
@@ -444,7 +457,7 @@ class Client:
         else:
             raise REPLFail(ret[1])
 
-    def eval(self, source, timeout=None, cmd_timeout=None, import_dir=None):
+    def eval(self, source, timeout=None, cmd_timeout=None, import_dir=None, base_dir=None):
         """
         The `eval` method ONLY accepts **complete** commands ---
         It is strictly forbiddened to split a command into multiple fragments and
@@ -477,11 +490,15 @@ class Client:
             raise ValueError("the argument source must be a string")
         if timeout is not None and not isinstance(timeout, int):
             raise ValueError("the argument timeout must be an integer")
+        if import_dir is not None:
+            import_dir = os.path.abspath(import_dir)
+        if base_dir is not None:
+            base_dir = os.path.abspath(base_dir)
         if timeout is None and import_dir is None:
             mp.pack(source, self.cout)
         else:
             mp.pack("\x05eval", self.cout)
-            mp.pack((source, timeout, cmd_timeout, import_dir), self.cout)
+            mp.pack((source, timeout, cmd_timeout, import_dir, base_dir), self.cout)
         self.cout.flush()
         ret = Client._parse_control_(self.unpack.unpack())
         return [CommandOutput.parse(output) for output in ret]

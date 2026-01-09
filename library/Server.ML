@@ -593,11 +593,12 @@ fun startup base_dir_of_theories thy0 addr0 =
                          ; output cout (packList packString) errs
                        end
                  | "\005eval" => let
-                           val (src, timeout, timeout_single_cmd, import_dir) =
-                                  read (unpackTuple4 (
+                           val (src, timeout, timeout_single_cmd, import_dir, base_dir) =
+                                  read (unpackTuple5 (
                                       unpackString,
                                       unpackOption unpackInt,
                                       unpackOption unpackInt,
+                                      unpackOption unpackString,
                                       unpackOption unpackString
                                   ))
                            val session = case import_dir
@@ -615,7 +616,8 @@ fun startup base_dir_of_theories thy0 addr0 =
                                        import_dir = Option.map Path.explode import_dir,
                                        single_cmd_timeout = Option.map Time.fromMilliseconds timeout_single_cmd,
                                        attributes = #attributes (!cfg),
-                                       base_dir = #base_dir (!cfg),
+                                       base_dir = the_default (#base_dir (!cfg))
+                                                              (Option.map Path.explode base_dir),
                                        write_thy = #write_thy (!cfg) }
                            val timeout = Option.map Time.fromMilliseconds timeout
                            val ret = case timeout

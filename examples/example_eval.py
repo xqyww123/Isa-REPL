@@ -22,8 +22,8 @@ c = Client(addr, 'HOL')
 
 def echo_eval (src):
     print('>>> '.join(src.splitlines(True)))
-    ret = c.silly_eval(src)
-    print(json.dumps(ret, indent=2))
+    ret = c.eval(src)
+    print(ret)
     return ret
 
 echo_eval ("""

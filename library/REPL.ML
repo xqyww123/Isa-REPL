@@ -318,6 +318,10 @@ fun is_theory_tok tok = Token.is_kind Token.Command tok andalso Token.content_of
 
 val loader_locker = Synchronized.var "REPL theory loader locker" ()
 
+(*
+fun use_theories options qualifier imports =
+  schedule_theories (#2 (require_thys options [] qualifier Path.current imports String_Graph.empty));
+*)
 fun thy_loader import_dir thy_qualifier targets_str =
   let val evaluated_theories = the_default Symtab.empty (Thread_Data.get evaluated_theories)
       fun is_loaded import =
@@ -341,8 +345,8 @@ fun thy_loader import_dir thy_qualifier targets_str =
    in if forall (is_loaded o #theory_name) targets
       then map (load' o #theory_name) targets
       else let
-      val cwd = Synchronized.change_result loader_locker (fn () =>
-                    (OS.FileSys.getDir (), ()))
+   (* val cwd = Synchronized.change_result loader_locker (fn () =>
+                    (OS.FileSys.getDir (), ())) *)
       val can_load = Execution.is_running Document_ID.none
 
       (*TODO: queue things to load and then process them together*)
@@ -352,13 +356,25 @@ fun thy_loader import_dir thy_qualifier targets_str =
                     then raise REPL_fail (
                               "Fail to load " ^ space_implode ", " (map #theory_name targets))
                     else ()
+
+            fun load_group works =
+                if null targets
+                then ()
+                else (Thy_Info.use_theories (Options.default ()) thy_qualifier
+                                            (map ( rpair Position.none
+                                                 o Path.implode
+                                                 o fst
+                                                 o Path.split_ext
+                                                 o #node_name) works) ; ())
+
+(*
             val target_groups = partition_eq (op = o apply2 #master_dir) targets
             fun load_group works = (
                 OS.FileSys.chDir (Path.implode (#master_dir (hd works)))
               ; if null targets
                 then ()
                 else (Thy_Info.use_theories (Options.default ()) thy_qualifier
-                                            (map (rpair Position.none o #theory_name) works) ; ()))
+                                            (map (rpair Position.none o #theory_name) works) ; ())) *)
          (* fun seg_load L =
               if null L
               then ()
@@ -367,9 +383,10 @@ fun thy_loader import_dir thy_qualifier targets_str =
                                         (map (rpair Position.none) this)
                      ; seg_load next
                    end *)
-         in \<^try>\<open> List.app load_group target_groups
+         in load_group targets
+         (* \<^try>\<open> load_group targets
             finally
-              OS.FileSys.chDir cwd \<close>
+              OS.FileSys.chDir cwd \<close> *)
             (* seg_load targets *)
         end)
 
