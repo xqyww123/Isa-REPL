@@ -15,6 +15,29 @@ ML_file \<open>library/REPL_aux.ML\<close>
 ML_file \<open>library/Server.ML\<close>
 
 (*
+declare [["ML_debugger" = true, show_types]]
+
+ML \<open>
+val configs = [("ML_debugger", "true"), ("show_types", "true")]
+fun implode_with _ [] = []
+  | implode_with _ [x] = x
+  | implode_with s (h::L) = h @ s :: implode_with s L
+val eq_symb = Token.make ((1,0), "=") Position.none |> fst
+val thy = @{theory}
+\<close>
+ML \<open>
+let fun mk_idt s = Token.make ((2,0),s) Position.none |> fst
+          val toks = map (fn (k,v) => [mk_idt k, eq_symb, mk_idt v]) configs
+          val attrs = map (Attrib.attribute_cmd_global thy) toks
+       in Thm.theory_attributes attrs Drule.dummy_thm thy
+       |> snd
+       |> (fn thy => Syntax.string_of_term_global thy @{prop \<open>(1::nat) + 1 = 2\<close>})
+       |> tracing
+      end
+\<close>
+*)
+
+(*
 ML \<open>Symtab.lookup (Attrib.Configs.get @{theory}) name\<close>
 
 ML \<open>

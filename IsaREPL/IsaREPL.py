@@ -460,7 +460,7 @@ class Client:
         else:
             raise REPLFail(ret[1])
 
-    def eval(self, source, timeout=None, cmd_timeout=None, import_dir=None, base_dir=None):
+    def eval(self, source, timeout=None, cmd_timeout=None, import_dir=None, base_dir=None, configs=None):
         """
         The `eval` method ONLY accepts **complete** commands ---
         It is strictly forbiddened to split a command into multiple fragments and
@@ -493,15 +493,25 @@ class Client:
             raise ValueError("the argument source must be a string")
         if timeout is not None and not isinstance(timeout, int):
             raise ValueError("the argument timeout must be an integer")
+        if cmd_timeout is not None and not isinstance(cmd_timeout, int):
+            raise ValueError("the argument cmd_timeout must be an integer")
+        if configs is not None and not isinstance(configs, dict):
+            raise ValueError("the argument configs must be a dictionary of strings")
+        if configs and not all(isinstance(k, str) and isinstance(v, str) for k, v in configs.items()):
+            configs = {k: str(v) for k, v in configs.items()}
+        if import_dir is not None and not isinstance(import_dir, str):
+            raise ValueError("the argument import_dir must be a string")
+        if base_dir is not None and not isinstance(base_dir, str):
+            raise ValueError("the argument base_dir must be a string")
         if import_dir is not None:
             import_dir = os.path.abspath(import_dir)
         if base_dir is not None:
             base_dir = os.path.abspath(base_dir)
-        if timeout is None and import_dir is None:
+        if timeout is None and import_dir is None and timeout is None and cmd_timeout is None and configs is None:
             mp.pack(source, self.cout)
         else:
             mp.pack("\x05eval", self.cout)
-            mp.pack((source, timeout, cmd_timeout, import_dir, base_dir), self.cout)
+            mp.pack((source, timeout, cmd_timeout, import_dir, base_dir, configs), self.cout)
         self.cout.flush()
         ret = Client._parse_control_(self.unpack.unpack())
         return [CommandOutput.parse(output) for output in ret]

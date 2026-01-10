@@ -7,6 +7,7 @@ type cfg = { thy_qualifier : string,
              file : string option,
              position_label : string option,
              additional_libs : string list,
+             configs: (string * string) list,
              import_dir : Path.T option,
              single_cmd_timeout: Time.time option,
              attributes : string list,
@@ -179,6 +180,7 @@ type cfg = { thy_qualifier : string,
              file : string option,
              position_label : string option,
              additional_libs : string list,
+             configs: (string * string) list,
              import_dir : Path.T option,
              single_cmd_timeout: Time.time option,
              attributes : string list,
@@ -402,7 +404,10 @@ fun add_evaluated_theories entry =
 fun add_global_theories entry =
   Synchronized.change global_theories (Symtab.update entry)
 
-fun init_thy ignore_imports {thy_qualifier, base_dir, additional_libs, import_dir, attributes,...} source =
+val eq_symb = Token.make ((1,0), "=") Position.none |> fst
+fun mk_idt s = Token.make ((2,0),s) Position.none |> fst
+
+fun init_thy ignore_imports {thy_qualifier, base_dir, additional_libs, configs, import_dir, attributes,...} source =
   let val toks = Token.tokenize pure_keywords {strict = false} source
       val i = find_index is_theory_tok toks
    in if i = ~1
@@ -444,6 +449,17 @@ fun init_thy ignore_imports {thy_qualifier, base_dir, additional_libs, import_di
        in Thm.theory_attributes attrs Drule.dummy_thm thy
        |> snd
       end)
+   |> not (null configs) ? (fn thy =>
+      let val toks = map (fn (k,v) =>
+                [Token.make_string (k, Position.none),
+                 eq_symb,
+                 if Char.contains v #" " orelse Char.contains v #"\""
+                 then Token.make_string (v, Position.none)
+                 else mk_idt v]) configs
+          val attrs = map (Attrib.attribute_cmd_global thy) toks
+       in Thm.theory_attributes attrs Drule.dummy_thm thy
+       |> snd
+      end )
    |> SOME
   end
   end

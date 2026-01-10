@@ -352,6 +352,7 @@ fun startup base_dir_of_theories thy0 addr0 =
                                    file = NONE,
                                    position_label = NONE,
                                    additional_libs = [],
+                                   configs = [],
                                    import_dir = NONE,
                                    single_cmd_timeout = NONE,
                                    attributes = [],
@@ -365,6 +366,7 @@ fun startup base_dir_of_theories thy0 addr0 =
                   file = SOME (Path.implode path),
                   position_label = NONE,
                   additional_libs = #additional_libs (!cfg),
+                  configs = #configs (!cfg),
                   import_dir = SOME (Path.dir path),
                   single_cmd_timeout = #single_cmd_timeout (!cfg),
                   attributes = (case attrs of SOME a => a
@@ -491,6 +493,7 @@ fun startup base_dir_of_theories thy0 addr0 =
                                             file = #file (!cfg),
                                             position_label = #position_label (!cfg),
                                             additional_libs = #additional_libs (!cfg),
+                                            configs = #configs (!cfg),
                                             import_dir = #import_dir (!cfg),
                                             single_cmd_timeout = #single_cmd_timeout (!cfg),
                                             attributes = #attributes (!cfg),
@@ -593,13 +596,14 @@ fun startup base_dir_of_theories thy0 addr0 =
                          ; output cout (packList packString) errs
                        end
                  | "\005eval" => let
-                           val (src, timeout, timeout_single_cmd, import_dir, base_dir) =
-                                  read (unpackTuple5 (
+                           val (src, timeout, timeout_single_cmd, import_dir, base_dir, configs) =
+                                  read (unpackTuple6 (
                                       unpackString,
                                       unpackOption unpackInt,
                                       unpackOption unpackInt,
                                       unpackOption unpackString,
-                                      unpackOption unpackString
+                                      unpackOption unpackString,
+                                      unpackOption (unpackPairList (unpackString, unpackString))
                                   ))
                            val session = case import_dir
                                 of SOME dir =>
@@ -613,6 +617,7 @@ fun startup base_dir_of_theories thy0 addr0 =
                                        file = #file (!cfg),
                                        position_label = #position_label (!cfg),
                                        additional_libs = #additional_libs (!cfg),
+                                       configs =the_default ( #configs (!cfg)) configs,
                                        import_dir = Option.map Path.explode import_dir,
                                        single_cmd_timeout = Option.map Time.fromMilliseconds timeout_single_cmd,
                                        attributes = #attributes (!cfg),
@@ -640,6 +645,7 @@ fun startup base_dir_of_theories thy0 addr0 =
                                     file = #file (!cfg),
                                     position_label = #position_label (!cfg),
                                     additional_libs = merge (op =) (#additional_libs (!cfg), libs),
+                                    configs = #configs (!cfg),
                                     import_dir = #import_dir (!cfg),
                                     single_cmd_timeout = #single_cmd_timeout (!cfg),
                                     attributes = #attributes (!cfg),
@@ -658,6 +664,7 @@ fun startup base_dir_of_theories thy0 addr0 =
                                     file = #file (!cfg),
                                     position_label = #position_label (!cfg),
                                     additional_libs = #additional_libs (!cfg),
+                                    configs = #configs (!cfg),
                                     import_dir = #import_dir (!cfg),
                                     single_cmd_timeout = time,
                                     attributes = #attributes (!cfg),
@@ -676,6 +683,7 @@ fun startup base_dir_of_theories thy0 addr0 =
                                        file = NONE,
                                        position_label = NONE,
                                        additional_libs = [],
+                                       configs = #configs (!cfg),
                                        import_dir = SOME (Path.explode master_dir),
                                        single_cmd_timeout = NONE,
                                        attributes = [],
@@ -806,6 +814,7 @@ fun startup base_dir_of_theories thy0 addr0 =
                           file = #file (!cfg),
                           position_label = #position_label (!cfg),
                           additional_libs = #additional_libs (!cfg),
+                          configs = #configs (!cfg),
                           import_dir = #import_dir (!cfg),
                           single_cmd_timeout = #single_cmd_timeout (!cfg),
                           attributes = #attributes (!cfg),
