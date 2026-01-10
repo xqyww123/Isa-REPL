@@ -15,10 +15,12 @@ ML_file \<open>library/REPL_aux.ML\<close>
 ML_file \<open>library/Server.ML\<close>
 
 (*
+ML \<open>Symtab.lookup (Attrib.Configs.get @{theory}) name\<close>
+
 ML \<open>
-val master_dir = Path.explode "/home/user/current_theory_dir";
-  val target_name = "Auto_Sledgehammer.Auto_Sledgehammer";  (* or "HOL.List" or "MyTheory" *)
-  val qualifier = "Draft";
+  val master_dir = Path.explode "./contrib/afp-2025-02-12/thys/Complex_Bounded_Operators";
+  val target_name = "Extra_Vector_Spaces";  (* or "HOL.List" or "MyTheory" *)
+  val qualifier = "Complex_Bounded_Operators";
 
   (* Parse the absolute path: *)
   val {node_name, master_dir = target_master_dir, theory_name} =
