@@ -514,7 +514,10 @@ class Client:
             mp.pack((source, timeout, cmd_timeout, import_dir, base_dir, configs), self.cout)
         self.cout.flush()
         ret = Client._parse_control_(self.unpack.unpack())
-        return [CommandOutput.parse(output) for output in ret]
+        if ret is None:
+            return None
+        else:
+            return [CommandOutput.parse(output) for output in ret]
 
     def set_trace(self, trace):
         """

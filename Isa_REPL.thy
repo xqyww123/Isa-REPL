@@ -15,7 +15,8 @@ ML_file \<open>library/REPL_aux.ML\<close>
 ML_file \<open>library/Server.ML\<close>
 
 (*
-declare [["ML_debugger" = true, show_types]]
+ML \<open>Config.declare_option_bool\<close>
+declare [["ML_debugger" = true, quick_and_dirty]]
 
 ML \<open>
 val configs = [("ML_debugger", "true"), ("show_types", "true")]
@@ -27,7 +28,7 @@ val thy = @{theory}
 \<close>
 ML \<open>
 let fun mk_idt s = Token.make ((2,0),s) Position.none |> fst
-          val toks = map (fn (k,v) => [mk_idt k, eq_symb, mk_idt v]) configs
+          val toks = map (fn (k,v) => [Token.make_string (k, Position.none), eq_symb, mk_idt v]) configs
           val attrs = map (Attrib.attribute_cmd_global thy) toks
        in Thm.theory_attributes attrs Drule.dummy_thm thy
        |> snd
@@ -35,8 +36,8 @@ let fun mk_idt s = Token.make ((2,0),s) Position.none |> fst
        |> tracing
       end
 \<close>
-*)
 
+*)
 (*
 ML \<open>Symtab.lookup (Attrib.Configs.get @{theory}) name\<close>
 
