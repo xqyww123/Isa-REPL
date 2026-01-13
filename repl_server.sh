@@ -106,7 +106,7 @@ EOF
 
 echo 1000 > /proc/$$/oom_score_adj
 echo isabelle build -D $DIR $options REPL$$
-REPL_DEFAULT_SESSION="$(printf '%b' $BASE_SESSION)" REPL_PID=$$ isabelle build -D $DIR $options REPL$$
+REPL_DEFAULT_SESSION="$(printf '%b' $BASE_SESSION)" REPL_PID=$$ isabelle build -o quick_and_dirty=true -D $DIR $options REPL$$
 
 #rm $DIR -r
 
