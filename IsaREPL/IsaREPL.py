@@ -235,6 +235,11 @@ def __unpack_position__(data):
     label, file, id = tup3
     return IsabellePosition(line, offset, file)
 
+def __unpack_translated_position__(data):  
+    line, column, end_offset, tup3 = data
+    label, file, id = tup3
+    return Position(line, column, file)
+
 def is_list_of_strings(lst):
     if lst and isinstance(lst, list):
         return all(isinstance(elem, str) for elem in lst)
@@ -557,7 +562,7 @@ class Client:
         mp.pack(source, self.cout)
         self.cout.flush()
         ret = Client._parse_control_(self.unpack.unpack())
-        ret = [(__unpack_position__(pos), src) for pos, src in ret]
+        ret = [(__unpack_translated_position__(pos), src) for pos, src in ret]
         #__repair_positions__(ret)
         return ret
 
@@ -587,7 +592,7 @@ class Client:
         mp.pack(source, self.cout)
         self.cout.flush()
         ret = Client._parse_control_(self.unpack.unpack())
-        ret = [(__unpack_position__(pos), src) for pos, src in ret]
+        ret = [(__unpack_translated_position__(pos), src) for pos, src in ret]
         #__repair_positions__(ret)
         return ret
 
