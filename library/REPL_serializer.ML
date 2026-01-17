@@ -8,6 +8,11 @@ val command_outputs_packer: REPL.command_outputs MessagePackBinIO.Pack.packer
 
 type pp_name = string
 
+val pack_raw_term : term MessagePackBinIO.Pack.packer
+val unpack_raw_term : term MessagePackBinIO.Unpack.unpacker
+val pack_raw_typ : typ MessagePackBinIO.Pack.packer
+val unpack_raw_typ : typ MessagePackBinIO.Unpack.unpacker
+
 val string_of_term : pp_name -> Context.generic -> term -> string
 val term_string : Context.generic -> term MessagePackBinIO.Pack.packer
 val s_expression : term -> string
@@ -193,6 +198,57 @@ fun print_typ  cfg ctxt term = print_xml cfg (YXML.parse (Syntax.string_of_typ  
 
 
 type pp_name = string
+
+local open MessagePackBinIO.Pack  MessagePackBinIO.Unpack in
+
+fun pack_raw_typ (Type data) =
+      packPair (packInt, packPair (packString, packList pack_raw_typ)) (0, data)
+  | pack_raw_typ (TFree data) =
+      packPair (packInt, packPair (packString, packList packString)) (1, data)
+  | pack_raw_typ (TVar ((n,i),s)) =
+      packPair (packInt, packTuple3 (packString, packInt, packList packString)) (2, (n,i,s))
+
+fun unpack_raw_typ s =
+      unpackPair_dep' unpackInt (
+        fn 0 => unpackPair (unpackString, unpackList unpack_raw_typ)
+             #> apfst Type
+         | 1 => unpackPair (unpackString, unpackList unpackString)
+             #> apfst TFree
+         | 2 => unpackTuple3 (unpackString, unpackInt, unpackList unpackString)
+             #> apfst (fn (n,i,s) => TVar ((n,i),s))
+         | _ => raise Unpack) s
+
+fun pack_raw_term (Const data) =
+      packPair (packInt, packPair (packString, pack_raw_typ)) (3, data)
+  | pack_raw_term (Free data) =
+      packPair (packInt, packPair (packString, pack_raw_typ)) (4, data)
+  | pack_raw_term (Var ((n,i),t)) =
+      packPair (packInt, packTuple3 (packString, packInt, pack_raw_typ)) (5, (n,i,t))
+  | pack_raw_term (Bound data) =
+      packPair (packInt, packInt) (6, data)
+  | pack_raw_term (Abs data) =
+      packPair (packInt, packTuple3 (packString, pack_raw_typ, pack_raw_term)) (7, data)
+  | pack_raw_term (A $ B) =
+      packPair (packInt, packPair (pack_raw_term, pack_raw_term)) (8, (A,B))
+
+fun unpack_raw_term s =
+      unpackPair_dep' unpackInt (
+        fn 3 => unpackPair (unpackString, unpack_raw_typ)
+             #> apfst Const
+         | 4 => unpackPair (unpackString, unpack_raw_typ)
+             #> apfst Free
+         | 5 => unpackTuple3 (unpackString, unpackInt, unpack_raw_typ)
+             #> apfst (fn (n,i,s) => Var ((n,i),s))
+         | 6 => unpackInt #> apfst Bound
+         | 7 => unpackTuple3 (unpackString, unpack_raw_typ, unpack_raw_term)
+             #> apfst Abs
+         | 8 => unpackPair (unpack_raw_term, unpack_raw_term)
+             #> apfst (fn (A,B) => A $ B)
+         | _ => raise Unpack) s
+
+(* fun raw_term_packer (Const (name, typ)) *)
+
+end
 
 local open MessagePackBinIO.Pack in
 
