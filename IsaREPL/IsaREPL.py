@@ -8,6 +8,9 @@ from enum import IntEnum
 import re
 import threading
 import time
+from importlib.metadata import version
+
+__version__ = version('IsaREPL')
 
 REPLFail = type('REPLFail', (Exception,), {})
 
@@ -398,7 +401,6 @@ class Client:
     A client for connecting Isabelle REPL
     """
 
-    VERSION = '0.14.0'
     clients = {} # from client_id to Client instance
 
     def __init__(self, addr, thy_qualifier, timeout=3600):
@@ -443,11 +445,18 @@ class Client:
         self.cin = self.sock.makefile('rb', buffering=0)
         self.unpack = mp.Unpacker(self.cin)
 
-        mp.pack(Client.VERSION, self.cout)
+        mp.pack(__version__, self.cout)
         mp.pack(thy_qualifier, self.cout)
         self.cout.flush()
         (self.pid, self.client_id) = Client._parse_control_(self.unpack.unpack())
         Client.clients[self.client_id] = self
+
+    def _send_call1(self, cmd, data):
+        mp.pack(cmd, self.cout)
+        mp.pack(data, self.cout)
+        self.cout.flush()
+    def _read(self):
+        return Client._parse_control_(self.unpack.unpack())
 
     def _chk_live(self):
         if self.cout.closed or self.cin.closed:
@@ -1229,6 +1238,14 @@ class Client:
         mp.pack("\x05diagnosis", self.cout)
         self.cout.flush()
         return dict(Client._parse_control_(self.unpack.unpack()))
+
+    def config(self, atrributes : list[str]):
+        if not isinstance(atrributes, list):
+            raise ValueError("the argument `atrributes` must be a list")
+        if not all(isinstance(attr, str) for attr in atrributes):
+            raise ValueError("every element in `atrributes` must be a string")
+        self._send_call1("\x05config", atrributes)
+        return self._read()
     
     _watchers = {}
     _watchers_lock = threading.Lock()
