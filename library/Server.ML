@@ -297,7 +297,7 @@ fun startup base_dir_of_theories thy0 addr0 =
       let val (conn,sender) = Socket.accept socket
           val (cin, cout) = make_streams conn
           val (version, cin) = MessagePackBinIO.Unpack.doUnpack (MessagePackBinIO.Unpack.unpackString) cin
-          val _ = if version = "0.14.0" then ()
+          val _ = if version = "0.14.1" then ()
                   else if version = "heartbeat"
                   then \<^try>\<open> (
                        output cout MessagePackBinIO.Pack.packUnit ()

@@ -5,286 +5,15 @@ import signal
 from collections import namedtuple
 from typing import Callable
 from enum import IntEnum
-import re
 import threading
 import time
 from importlib.metadata import version
 
+from Isabelle_RPC_Host.position import IsabellePosition, Position
+
 __version__ = version('IsaREPL')
 
 REPLFail = type('REPLFail', (Exception,), {})
-
-
-def _load_symbols(path, symbols={}, reverse_symbols={}):
-    """
-    Load Isabelle symbol file
-    Return: (A dictionary from ASCII symbol to unicode symbol, and the reverse dictionary)
-    """
-    if not isinstance(path, str):
-        raise ValueError("the argument path must be a string")
-    if not os.path.exists(path):
-        return symbols, reverse_symbols
-    with open(path, 'r', encoding='utf-8') as file:
-        for line in file:
-            # Every line has a form like `\<odiv>            code: 0x002A38   font: PhiSymbols   group: operator   abbrev: (-:)`
-            # Here we extract the `\<odiv>` part as a string and the `0x002A38` part as a character
-            # Skip comments and empty lines
-            line = line.strip()
-            if not line or line.startswith('#'):
-                continue
-            
-            # Parse the line to extract symbol and code point
-            parts = line.split()
-            
-            # Extract the symbol name (like \<odiv>)
-            symbol = parts[0]
-            
-            # Find the code point (format can be either "code: 0x002A38" or "code:0x002A38")
-            code_point = None
-            for i, part in enumerate(parts[1:], 1):  # Start index at 1 since we're iterating from parts[1:]
-                if part.startswith('code:'):
-                    # Handle the case where there's no space after "code:"
-                    if ':' in part and len(part) > 5:  # "code:" is 5 chars
-                        code_point = part.split(':', 1)[1].strip()
-                    # Otherwise, the hex value should be in the next part
-                    elif i < len(parts) - 1:  # Check if there's a next element
-                        code_point = parts[i + 1].strip()
-                    break
-            
-            if symbol and code_point:
-                try:
-                    # Convert hex code point to unicode character
-                    unicode_char = chr(int(code_point, 16))
-                    # Add to dictionaries
-                    symbols[symbol] = unicode_char
-                    reverse_symbols[unicode_char] = symbol
-                except ValueError:
-                    # Skip if code point is invalid
-                    continue
-    return symbols, reverse_symbols
-
-SYMBOLS_CACHE = None
-
-def get_SYMBOLS_AND_REVERSED():
-    global SYMBOLS_CACHE
-    if SYMBOLS_CACHE is not None:
-        return SYMBOLS_CACHE
-    isabelle_home = os.popen("isabelle getenv -b ISABELLE_HOME").read().strip()
-    isabelle_home_user = os.popen("isabelle getenv -b ISABELLE_HOME_USER").read().strip()
-    SYMBOLS, REVERSE_SYMBOLS = {}, {}
-    for file in [f"{isabelle_home}/etc/symbols", f"{isabelle_home_user}/etc/symbols"]:
-        SYMBOLS, REVERSE_SYMBOLS = _load_symbols(file, SYMBOLS, REVERSE_SYMBOLS)
-    SYMBOLS_CACHE = (SYMBOLS, REVERSE_SYMBOLS, str.maketrans(REVERSE_SYMBOLS))
-    return SYMBOLS_CACHE
-
-def get_SYMBOLS():
-    return get_SYMBOLS_AND_REVERSED()[0]
-
-def get_REVERSE_SYMBOLS():
-    return get_SYMBOLS_AND_REVERSED()[1]
-
-SUBSUP_TRANS_TABLE = {
-    "⇩0": "₀", "⇩1": "₁", "⇩2": "₂", "⇩3": "₃", "⇩4": "₄",
-    "⇩5": "₅", "⇩6": "₆", "⇩7": "₇", "⇩8": "₈", "⇩9": "₉",
-    #ₐₑₕᵢⱼₖₗₘₙₒₚᵣₛₜᵤᵥₓ
-    "⇩a": "ₐ", "⇩e": "ₑ", "⇩h": "ₕ", "⇩i": "ᵢ", "⇩j": "ⱼ", "⇩k": "ₖ", "⇩l": "ₗ",
-    "⇩m": "ₘ", "⇩n": "ₙ", "⇩o": "ₒ", "⇩p": "ₚ", "⇩r": "ᵣ", "⇩s": "ₛ", "⇩t": "ₜ",
-    "⇩u": "ᵤ", "⇩v": "ᵥ", "⇩x": "ₓ",
-    "⇧0": "⁰", "⇧1": "¹", "⇧2": "²", "⇧3": "³", "⇧4": "⁴",
-    "⇧5": "⁵", "⇧6": "⁶", "⇧7": "⁷", "⇧8": "⁸", "⇧9": "⁹",
-    "⇧A": "ᴬ", "⇧B": "ᴮ", "⇧D": "ᴰ", "⇧E": "ᴱ",
-    "⇧G": "ᴳ", "⇧H": "ᴴ", "⇧I": "ᴵ", "⇧J": "ᴶ", "⇧K": "ᴷ", "⇧L": "ᴸ",
-    "⇧M": "ᴹ", "⇧N": "ᴺ", "⇧O": "ᴼ", "⇧P": "ᴾ", "⇧R": "ᴿ", "⇧T": "ᵀ",
-    "⇧U": "ᵁ", "⇧V": "ⱽ", "⇧W": "ᵂ",
-    #ᵃᵇᶜᵈᵉᶠᵍʰⁱʲᵏˡᵐⁿᵒᵖˢᵗᵘᵛʷˣʸᶻ
-    "⇧a": "ᵃ", "⇧b": "ᵇ", "⇧c": "ᶜ", "⇧d": "ᵈ", "⇧e": "ᵉ", "⇧f": "ᶠ",
-    "⇧g": "ᵍ", "⇧h": "ʰ", "⇧i": "ⁱ", "⇧j": "ʲ", "⇧k": "ᵏ", "⇧l": "ˡ",
-    "⇧m": "ᵐ", "⇧n": "ⁿ", "⇧o": "ᵒ", "⇧p": "ᵖ", "⇧s": "ˢ", "⇧t": "ᵗ",
-    "⇧u": "ᵘ", "⇧v": "ᵛ", "⇧w": "ʷ", "⇧x": "ˣ", "⇧y": "ʸ", "⇧z": "ᶻ",
-    "⇩-": "₋", "⇧-": "⁻", "⇩+": "₊", "⇧+": "⁺", "⇩=": "₌", "⇧=": "⁼",
-    "⇩(": "₍", "⇧(": "⁽", "⇩)": "₎", "⇧)": "⁾",
-    "❙a": "𝐚", "❙b": "𝐛", "❙c": "𝐜", "❙d": "𝐝", "❙e": "𝐞", "❙f": "𝐟",
-    "❙g": "𝐠", "❙h": "𝐡", "❙i": "𝐢", "❙j": "𝐣", "❙k": "𝐤", "❙l": "𝐥",
-    "❙m": "𝐦", "❙n": "𝐧", "❙o": "𝐨", "❙p": "𝐩", "❙q": "𝐪", "❙r": "𝐫",
-    "❙s": "𝐬", "❙t": "𝐭", "❙u": "𝐮", "❙v": "𝐯", "❙w": "𝐰", "❙x": "𝐱",
-    "❙y": "𝐲", "❙z": "𝐳",
-    "❙A": "𝐀", "❙B": "𝐁", "❙C": "𝐂", "❙D": "𝐃", "❙E": "𝐄", "❙F": "𝐅",
-    "❙G": "𝐆", "❙H": "𝐇", "❙I": "𝐈", "❙J": "𝐉", "❙K": "𝐊", "❙L": "𝐋",
-    "❙M": "𝐌", "❙N": "𝐍", "❙O": "𝐎", "❙P": "𝐏", "❙Q": "𝐐", "❙R": "𝐑",
-    "❙S": "𝐒", "❙T": "𝐓", "❙U": "𝐔", "❙V": "𝐕", "❙W": "𝐖", "❙X": "𝐗",
-    "❙Y": "𝐘", "❙Z": "𝐙",
-}
-
-SUBSUP_RESTORE_TABLE = {
-    "₀": "⇩0", "₁": "⇩1", "₂": "⇩2", "₃": "⇩3", "₄": "⇩4",
-    "₅": "⇩5", "₆": "⇩6", "₇": "⇩7", "₈": "⇩8", "₉": "⇩9",
-    "ₐ": "⇩a", "ₑ": "⇩e", "ₕ": "⇩h", "ᵢ": "⇩i", "ⱼ": "⇩j", "ₖ": "⇩k", "ₗ": "⇩l",
-    "ₘ": "⇩m", "ₙ": "⇩n", "ₒ": "⇩o", "ₚ": "⇩p", "ᵣ": "⇩r", "ₛ": "⇩s", "ₜ": "⇩t",
-    "ᵤ": "⇩u", "ᵥ": "⇩v", "ₓ": "⇩x",
-    "⁰": "⇧0", "¹": "⇧1", "²": "⇧2", "³": "⇧3", "⁴": "⇧4",
-    "⁵": "⇧5", "⁶": "⇧6", "⁷": "⇧7", "⁸": "⇧8", "⁹": "⇧9",
-    "ᴬ": "⇧A", "ᴮ": "⇧B", "ᴰ": "⇧D", "ᴱ": "⇧E", "ᴳ": "⇧G", "ᴴ": "⇧H", "ᴵ": "⇧I",
-    "ᴶ": "⇧J", "ᴷ": "⇧K", "ᴸ": "⇧L", "ᴹ": "⇧M", "ᴺ": "⇧N", "ᴼ": "⇧O", "ᴾ": "⇧P",
-    "ᴿ": "⇧R", "ᵀ": "⇧T", "ᵁ": "⇧U", "ⱽ": "⇧V", "ᵂ": "⇧W",
-    "ᵃ": "⇧a", "ᵇ": "⇧b", "ᶜ": "⇧c", "ᵈ": "⇧d", "ᵉ": "⇧e", "ᶠ": "⇧f",
-    "ᵍ": "⇧g", "ʰ": "⇧h", "ⁱ": "⇧i", "ʲ": "⇧j", "ᵏ": "⇧k", "ˡ": "⇧l",
-    "ᵐ": "⇧m", "ⁿ": "⇧n", "ᵒ": "⇧o", "ᵖ": "⇧p", "ˢ": "⇧s", "ᵗ": "⇧t",
-    "ᵘ": "⇧u", "ᵛ": "⇧v", "ʷ": "⇧w", "ˣ": "⇧x", "ʸ": "⇧y", "ᶻ": "⇧z",
-    "₋": "⇩-", "⁻": "⇧-", "₊": "⇩+", "⁺": "⇧+", "₌": "⇩=", "⁼": "⇧=",
-    "₍": "⇩(", "⁽": "⇧(", "₎": "⇩)", "⁾": "⇧)",
-    "𝐚": "❙a", "𝐛": "❙b", "𝐜": "❙c", "𝐝": "❙d", "𝐞": "❙e", "𝐟": "❙f",
-    "𝐠": "❙g", "𝐡": "❙h", "𝐢": "❙i", "𝐣": "❙j", "𝐤": "❙k", "𝐥": "❙l",
-    "𝐦": "❙m", "𝐧": "❙n", "𝐨": "❙o", "𝐩": "❙p", "𝐪": "❙q", "𝐫": "❙r",
-    "𝐬": "❙s", "𝐭": "❙t", "𝐮": "❙u", "𝐯": "❙v", "𝐰": "❙w", "𝐱": "❙x",
-    "𝐲": "❙y", "𝐳": "❙z",
-    "𝐀": "❙A", "𝐁": "❙B", "𝐂": "❙C", "𝐃": "❙D", "𝐄": "❙E", "𝐅": "❙F",
-    "𝐆": "❙G", "𝐇": "❙H", "𝐈": "❙I", "𝐉": "❙J", "𝐊": "❙K", "𝐋": "❙L",
-    "𝐌": "❙M", "𝐍": "❙N", "𝐎": "❙O", "𝐏": "❙P", "𝐐": "❙Q", "𝐑": "❙R",
-    "𝐒": "❙S", "𝐓": "❙T", "𝐔": "❙U", "𝐕": "❙V", "𝐖": "❙W", "𝐗": "❙X",
-    "𝐘": "❙Y", "𝐙": "❙Z",
-}
-
-SUBSUP_RESTORE_TABLE_trans = str.maketrans(SUBSUP_RESTORE_TABLE)
-
-class IsabellePosition:
-    def __init__(self, line : int, raw_offset : int, file : str):
-        self.line = line
-        self.raw_offset = raw_offset
-        self.file = file
-
-    def __str__(self):
-        return f"{self.file}:{self.line}:{self.raw_offset}"
-
-    def __repr__(self):
-        return self.__str__()
-
-    def __eq__(self, other):
-        if not isinstance(other, IsabellePosition):
-            return False
-        return (self.line == other.line and 
-                self.raw_offset == other.raw_offset and 
-                self.file == other.file)
-
-    def __hash__(self):
-        return hash((self.line, self.raw_offset, self.file))
-
-    def __lt__(self, other):
-        if not isinstance(other, IsabellePosition):
-            return NotImplemented
-        return (self.file, self.line, self.raw_offset) < (other.file, other.line, other.raw_offset)
-
-    def __le__(self, other):
-        if not isinstance(other, IsabellePosition):
-            return NotImplemented
-        return (self.file, self.line, self.raw_offset) <= (other.file, other.line, other.raw_offset)
-
-    def __gt__(self, other):
-        if not isinstance(other, IsabellePosition):
-            return NotImplemented
-        return (self.file, self.line, self.raw_offset) > (other.file, other.line, other.raw_offset)
-
-    def __ge__(self, other):
-        if not isinstance(other, IsabellePosition):
-            return NotImplemented
-        return (self.file, self.line, self.raw_offset) >= (other.file, other.line, other.raw_offset)
-
-    @staticmethod
-    def from_s(position_str):
-        parts = position_str.split(':')
-        match parts:
-            case [file, line, raw_offset, _]:
-                return IsabellePosition(int(line), int(raw_offset), file)
-            case [file, line, raw_offset]:
-                return IsabellePosition(int(line), int(raw_offset), file)
-            case [file, line]:
-                return IsabellePosition(int(line), 0, file)
-            case [file]:
-                return IsabellePosition(0, 0, file)
-            case _:
-                raise ValueError("The string must be in the format: file:line:raw_offset")
-
-class Position:
-    def __init__(self, line : int, column : int, file : str):
-        self.line = line
-        self.column = column
-        self.file = file
-    
-    def to_s(self, with_column=True):
-        if with_column:
-            return self.__str__()
-        else:
-            return f"{self.file}:{self.line}"
-
-    def __str__(self):
-        if self.column == 0:
-            return f"{self.file}:{self.line}"
-        else:
-            return f"{self.file}:{self.line}:{self.column}"
-
-    def __repr__(self):
-        return self.__str__()
-
-    def __eq__(self, other):
-        if not isinstance(other, Position):
-            return False
-        return (self.line == other.line and 
-                self.column == other.column and 
-                self.file == other.file)
-
-    def __hash__(self):
-        return hash((self.line, self.column, self.file))
-
-    def __lt__(self, other):
-        if not isinstance(other, Position):
-            return NotImplemented
-        return (self.file, self.line, self.column) < (other.file, other.line, other.column)
-
-    def __le__(self, other):
-        if not isinstance(other, Position):
-            return NotImplemented
-        return (self.file, self.line, self.column) <= (other.file, other.line, other.column)
-
-    def __gt__(self, other):
-        if not isinstance(other, Position):
-            return NotImplemented
-        return (self.file, self.line, self.column) > (other.file, other.line, other.column)
-
-    def __ge__(self, other):
-        if not isinstance(other, Position):
-            return NotImplemented
-        return (self.file, self.line, self.column) >= (other.file, other.line, other.column)
-
-    @staticmethod
-    def from_s(position_str):
-        parts = position_str.split(':')
-        match parts:
-            case [file, line, column, _]:
-                return Position(int(line), int(column), file)
-            case [file, line, column]:
-                return Position(int(line), int(column), file)
-            case [file, line]:
-                return Position(int(line), 0, file)
-            case [file]:
-                return Position(0, 0, file)
-            case _:
-                raise ValueError("The string must be in the format: file:line:column")
-    
-    def offset_of(self, lines=None):
-        if lines is None:
-            with open(self.file, 'r', encoding="latin-1") as f:
-                lines = f.readlines()
-        base_ofs = sum(len(line) for line in lines[:self.line-1])
-        return base_ofs + self.column - 1
-
-def __unpack_position__(data):  
-    line, offset, end_offset, tup3 = data
-    label, file, id = tup3
-    return IsabellePosition(line, offset, file)
-
-def __unpack_translated_position__(data):  
-    line, column, end_offset, tup3 = data
-    label, file, id = tup3
-    return Position(line, column, file)
 
 def is_list_of_strings(lst):
     if lst and isinstance(lst, list):
@@ -379,7 +108,7 @@ class CommandOutput:
         # Create and return CommandOutput instance
         return cls(
             command=output[0],
-            range=(__unpack_position__(begin_pos), __unpack_position__(end_pos)),
+            range=(IsabellePosition.unpack(begin_pos), IsabellePosition.unpack(end_pos)),
             output=output_messages,
             latex=output[2],
             flags=flags,
@@ -452,6 +181,8 @@ class Client:
         Client.clients[self.client_id] = self
 
     def _send_call1(self, cmd, data):
+        if self.cout.closed:
+            raise REPLFail(f"Client {self.client_id} is dead or closed")
         mp.pack(cmd, self.cout)
         mp.pack(data, self.cout)
         self.cout.flush()
@@ -492,15 +223,9 @@ class Client:
 
 
     def close(self):
-        if self.cout:
-            self.cout.close()
-            self.cout = None
-        if self.cin:
-            self.cin.close()
-            self.cin = None
-        if self.sock:
-            self.sock.close()
-            self.sock = None
+        self.cout.close()
+        self.cin.close()
+        self.sock.close()
         try:
             del Client.clients[self.client_id]
         except:
@@ -614,7 +339,7 @@ class Client:
         mp.pack(source, self.cout)
         self.cout.flush()
         ret = Client._parse_control_(self.unpack.unpack())
-        ret = [(__unpack_translated_position__(pos), src) for pos, src in ret]
+        ret = [(Position.unpack(pos), src) for pos, src in ret]
         #__repair_positions__(ret)
         return ret
 
@@ -626,7 +351,7 @@ class Client:
         mp.pack(os.path.abspath(file), self.cout)
         self.cout.flush()
         ret = Client._parse_control_(self.unpack.unpack())
-        ret = [(__unpack_position__(pos), src) for pos, src in ret]
+        ret = [(IsabellePosition.unpack(pos), src) for pos, src in ret]
         return ret
 
     def fast_lex(self, source):
@@ -644,7 +369,7 @@ class Client:
         mp.pack(source, self.cout)
         self.cout.flush()
         ret = Client._parse_control_(self.unpack.unpack())
-        ret = [(__unpack_translated_position__(pos), src) for pos, src in ret]
+        ret = [(Position.unpack(pos), src) for pos, src in ret]
         #__repair_positions__(ret)
         return ret
 
@@ -1063,45 +788,6 @@ class Client:
         Kill the entire server
         """
         os.kill(self.pid, signal.SIGKILL)
-
-    @staticmethod
-    def pretty_unicode(src):
-        """
-        Argument src: Any script that uses Isabelle's ASCII notation like `\\<Rightarrow>`
-        Return: unicode version of `src`
-        """
-        # map every substring `s` in src to SYMBOLS[s] if s in SYMBOLS, otherwise s
-        # Use a regular expression to find all potential Isabelle symbols
-        pattern = r'\\<[^>]+>'
-        subscript_pattern = r'⇩.|⇧.|❙.'
-        
-        # Function to replace each match with its Unicode equivalent if available
-        def replace_symbol(match):
-            symbol = match.group(0)
-            return get_SYMBOLS().get(symbol, symbol)
-        
-        def replace_subsupscript(match):
-            symbol = match.group(0)
-            return SUBSUP_TRANS_TABLE.get(symbol, symbol)
-        
-        # Use re.sub to efficiently perform all replacements at once
-        return re.sub(subscript_pattern, replace_subsupscript, re.sub(pattern, replace_symbol, src))
-
-    @staticmethod
-    def unicode_of_ascii(src):
-        return Client.pretty_unicode(src)
-
-    @staticmethod
-    def ascii_of_unicode(src):
-        """
-        Argument src: Any unicode string
-        Return: Isabelle's ASCII version of `src`.
-        This method is the reverse of `pretty_unicode`.
-        """
-        # map every character `c` in `src` to REVERSE_SYMBOLS[c] if c in REVERSE_SYMBOLS, otherwise c
-        # Use str.translate with a translation table for maximum efficiency
-        trans_table = get_SYMBOLS_AND_REVERSED()[2]
-        return src.translate(SUBSUP_RESTORE_TABLE_trans).translate(trans_table)
 
     def path_of_theory(self, theory_name, master_directory):
         self._chk_live()

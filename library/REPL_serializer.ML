@@ -78,7 +78,7 @@ fun random () =
   end
 
 
-fun print_xml {bv_typ, num_typ, free_typ, constant_typ, all_typ, sorting, show_type_P, show_sort_P} xml =
+fun print_xml {bv_typ, num_typ, free_typ, constant_typ, all_typ, sorting, show_type_P, show_sort_P} body =
   let val show_type =
             case show_type_P of SOME P => let val rand = random ()
                                            in fn () => rand () <= P
@@ -190,11 +190,24 @@ fun print_xml {bv_typ, num_typ, free_typ, constant_typ, all_typ, sorting, show_t
          in pass (rev ir) []
         end
 (*      and dump_str tree = dump_ir (rev (dump_xml tree)) *)
-   in String.concat (dump_ir (dump_xml xml []))
+   in String.concat (dump_ir (fold dump_xml body []))
   end
 
-fun print_term cfg ctxt term = print_xml cfg (YXML.parse (Syntax.string_of_term ctxt term))
-fun print_typ  cfg ctxt term = print_xml cfg (YXML.parse (Syntax.string_of_typ  ctxt term))
+fun print_term cfg ctxt =
+  let val ctxt = ctxt
+        |> Config.put Printer.show_markup true
+        |> Config.put Printer.show_types false
+        |> Config.put Printer.show_sorts false
+   in fn term => print_xml cfg (YXML.parse_body (Syntax.string_of_term ctxt term))
+  end
+
+fun print_typ cfg ctxt =
+  let val ctxt = ctxt
+        |> Config.put Printer.show_markup true
+        |> Config.put Printer.show_types false
+        |> Config.put Printer.show_sorts false
+   in fn typ => print_xml cfg (YXML.parse_body (Syntax.string_of_typ ctxt typ))
+  end
 
 
 type pp_name = string
@@ -355,6 +368,68 @@ and out_args ret bvs ctxt args = fold_rev (fn x => fn ret => (" " :: s_expr ret 
 
 fun s_expression term = String.concat (s_expr [] [] Name.context term)
 val s_expression_packer = packString o s_expression
+
+(*
+  Term Formatting Options
+  ========================
+
+  The string_of_term function provides multiple formatting options for pretty-printing
+  Isabelle terms. Each format is identified by a string name and configures the Isabelle
+  pretty printer with different settings.
+
+  Fully Qualified Name: REPL_Serialize.string_of_term : string -> Context.generic -> term -> string
+
+  Usage from Isabelle/ML:
+    val formatter = REPL_Serialize.string_of_term "pretty"
+    val term_str = formatter ctxt my_term
+
+  Available Formats:
+
+  1. "sexpr" - S-expression format showing full internal term structure
+     Example: (Const "Groups.plus" (Type "fun" [...]))
+
+  2. "natural" - Uses context's natural printing settings (show_markup = false)
+     Example: x + y  (depends on context configuration)
+
+  3. "oridinary" (alias: "pretty") - Standard pretty-printing without type annotations
+     Config: show_types=false, show_sorts=false, show_types_nv=false
+     Example: x + y
+
+  4. "pretty" - Alias for "oridinary"
+
+  5. "type" (alias: "typed_pretty") - Pretty-printing with type annotations
+     Config: show_types=true, show_sorts=false, show_types_nv=false
+     Example: (x + y) :: nat
+
+  6. "typed_pretty" - Alias for "type"
+
+  7. "type_sort" - Intended for types with sorts (currently identical to "type")
+     Config: show_types=true, show_sorts=false, show_types_nv=false
+     NOTE: This appears to be incomplete; show_sorts should be true for sort annotations
+     Example: (x + y) :: nat  (sorts not shown)
+
+  8. "type_nv" (alias: "typed-nv_pretty") - Types shown on non-variables too
+     Config: show_types=true, show_sorts=false, show_types_nv=true
+     Example: (x + y) :: nat  (with more type annotations on subterms)
+
+  9. "typed-nv_pretty" - Alias for "type_nv"
+
+  10. "T4S4" - Probabilistic format: 40% chance types, 40% chance sorts (for training data)
+      Config: show_types (40% prob), show_sorts (40% prob if types shown), show_types_nv=false
+      Example: Randomly either "x + y" or "(x + y) :: nat" or "(x + y) :: nat::type"
+
+  11. "T4S4nv" - Like T4S4 but with show_types_nv = show_types
+      Config: show_types (40% prob), show_sorts (40% prob), show_types_nv = show_types
+
+  12. "T2S3" - Probabilistic format: 20% chance types, 30% chance sorts (for training data)
+      Config: show_types (20% prob), show_sorts (30% prob if types shown), show_types_nv=false
+
+  13. "T2S3nv" - Like T2S3 but with show_types_nv = show_types
+      Config: show_types (20% prob), show_sorts (30% prob), show_types_nv = show_types
+
+  Recommended for User-Facing Output: "pretty", "typed_pretty", "sexpr"
+  Recommended for ML Training Data: "T4S4", "T4S4nv", "T2S3", "T2S3nv"
+*)
 
 fun string_of_term "sexpr" = (fn _ => s_expression)
   | string_of_term "natural" = (fn ctxt =>
