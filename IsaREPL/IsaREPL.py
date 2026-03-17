@@ -933,6 +933,38 @@ class Client:
         self._send_call1("\x05config", atrributes)
         return self._read()
     
+    def callback(self, name: str, arg=None):
+        """
+        Call a global callback registered in Isabelle_RPC.
+
+        Global callbacks are registered on the Isabelle/ML side using
+        Remote_Procedure_Calling.register_global_callback.
+
+        Args:
+            name: The name of the callback to invoke
+            arg: The argument to pass to the callback (must match the callback's arg_schema)
+
+        Returns:
+            The callback's return value (unpacked from msgpack)
+        """
+        self._chk_live()
+        if not isinstance(name, str):
+            raise ValueError("the argument `name` must be a string")
+        mp.pack("\x05callback", self.cout)
+        mp.pack(name, self.cout)
+        self.cout.flush()
+        # Phase 1: check if callback exists
+        phase1 = self.unpack.unpack()
+        if phase1[1] is not None:
+            raise REPLFail(phase1[1])
+        # Phase 2: send arg and read result
+        mp.pack(arg, self.cout)
+        self.cout.flush()
+        ret = self.unpack.unpack()
+        if ret[1] is not None:
+            raise REPLFail(ret[1])
+        return ret[0]
+
     _watchers = {}
     _watchers_lock = threading.Lock()
     @classmethod

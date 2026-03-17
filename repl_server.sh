@@ -90,8 +90,14 @@ imports "Isa_REPL.Isa_REPL"
 begin
 ML \\<open>
 REPL.disable_output () ;
-try (Thy_Info.register_thy) @{theory Auto_Sledgehammer} ;
-try Thy_Info.register_thy @{theory Isa_REPL} ;
+fun reg thy = Thy_Info.register_thy thy
+  handle ERROR msg =>
+    if String.isPrefix "Cannot update finished theory" msg then ()
+    else raise (ERROR msg) ;
+reg @{theory Performant_Isabelle_ML} ;
+reg @{theory Remote_Procedure_Calling} ;
+reg @{theory Auto_Sledgehammer} ;
+reg @{theory Isa_REPL} ;
 Isabelle_Thread.join (REPL_Server.startup (Path.explode "$(printf '%b' $MASTER_DIR)") NONE "$(printf '%b' $ADDR)");
 error "IGNORE THIS ERROR"
 \\<close>

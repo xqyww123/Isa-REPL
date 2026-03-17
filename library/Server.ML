@@ -129,7 +129,10 @@ fun run_ML ctxt source =
         ret := ! REPL_ML_sender2_DO_NOT_OVERRIDE_ ;
         REPL_ML_sender2_DO_NOT_OVERRIDE_ := NONE
       ))
-    ; the (!ret) ()
+    ; case !ret of
+        SOME f => f ()
+      | NONE => error ("run_ML: ML expression did not produce a result for: " ^
+                        String.substring (source, 0, Int.min (200, size source)))
   end
 
 
@@ -517,7 +520,7 @@ fun startup base_dir_of_theories thy0 addr0 =
                        end
                  | "\005ML" => let
                            val (thy,src) = read (unpackPair (unpackOption unpackString, unpackString))
-                           val thy = Option.map (singleton (REPL.thy_loader NONE "HOL")) thy
+                           val thy = Option.map (singleton (REPL.thy_loader NONE thy_qualifier)) thy
                         in run_ML (Option.map Context.Theory thy) src
                          ; output cout packBool true
                        end
@@ -778,7 +781,17 @@ fun startup base_dir_of_theories thy0 addr0 =
                               (Synchronized.value clients) []
                         in output cout (packList (packPair (packInt, packPair (packBool, packList packString)))) info
                        end
-                  | other => raise REPL.REPL_fail ("Unknown REPL command" ^ other)
+                  | "\005callback" => let
+                           val name = read unpackString
+                        in case Remote_Procedure_Calling.get_global_callback name
+                           of NONE => output_err cout ("Unknown callback: " ^ name)
+                            | SOME {action, ...} => (
+                                output cout packBool true
+                              ; BinIO.StreamIO.flushOut cout
+                              ; let val conn = (cin, cout, Unsynchronized.ref NONE)
+                                 in action conn end)
+                       end
+                 | other => raise REPL.REPL_fail ("Unknown REPL command" ^ other)
                 end handle REPL.REPL_fail E => report_error cout E
               else let
                 val ret = REPL.RE (!cfg) source
