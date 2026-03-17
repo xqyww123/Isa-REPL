@@ -5,7 +5,7 @@ functor MessagePack(S : sig
                       val inputN : instream * int -> Word8Vector.vector * instream
                       val output : outstream * Word8Vector.vector -> unit
                       val output1 : outstream * Word8.word -> unit
-                    end) :> sig
+                    end) : sig
   structure Pack : sig
     type raw_packer = S.outstream -> unit
     type 'a packer = 'a -> raw_packer
