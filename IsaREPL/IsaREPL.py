@@ -132,7 +132,7 @@ class Client:
 
     clients = {} # from client_id to Client instance
 
-    def __init__(self, addr, thy_qualifier, timeout=3600):
+    def __init__(self, addr : str, thy_qualifier : str, timeout : int | None = 3600):
         """
         Create a client and connect it to `addr`.
 
