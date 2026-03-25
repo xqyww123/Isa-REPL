@@ -797,10 +797,7 @@ fun startup base_dir_of_theories thy0 addr0 =
                 val ret = REPL.RE (!cfg) source
                  in doPack REPL_Serialize.command_outputs_packer ret cout
                 end )
-              catch E => (
-                    report_error cout (Runtime.exn_message E)
-                  ; File.write (Path.explode "/tmp/last_error") (Runtime.exn_message E)
-                  )\<close>
+              catch E => report_error cout (Runtime.exn_message E)\<close>
             end
           fun loop client_id =
             let val continue = Unsynchronized.ref true
