@@ -1,12 +1,9 @@
+import asyncio
 import msgpack as mp
-import socket
 import os
 import signal
-from collections import namedtuple
-from typing import Callable
+from typing import Any, Callable
 from enum import IntEnum
-import threading
-import time
 from importlib.metadata import version
 
 from Isabelle_RPC_Host.position import IsabellePosition, Position
@@ -25,7 +22,7 @@ def is_list_of_strings(lst):
 class MessageType(IntEnum):
     """
     Message type enumeration for Isabelle output messages.
-    
+
     Values:
         NORMAL: 0 - Normal outputs printed by Isabelle/ML `writeln`
         TRACING: 1 - Tracing information printed by Isabelle/ML `tracing`
@@ -39,7 +36,7 @@ class MessageType(IntEnum):
 class CommandFlags:
     """
     Boolean flags indicating the state of the Isabelle session.
-    
+
     Attributes:
         is_toplevel: Whether the Isabelle state is outside any theory block
         is_theory: Whether the state is within a theory block and at the toplevel of this block
@@ -51,7 +48,7 @@ class CommandFlags:
         self.is_theory = is_theory
         self.is_proof = is_proof
         self.has_goal = has_goal
-    
+
     def __repr__(self):
         return f"CommandFlags(is_toplevel={self.is_toplevel}, is_theory={self.is_theory}, is_proof={self.is_proof}, has_goal={self.has_goal})"
 
@@ -59,7 +56,7 @@ class CommandFlags:
 class CommandOutput:
     """
     Represents the output from evaluating a single Isabelle command.
-    
+
     Attributes:
         command: The name of the command
         range: A tuple of (begin_pos, end_pos) indicating the range of the command,
@@ -83,15 +80,15 @@ class CommandOutput:
         self.state = state
         self.plugin_output = plugin_output
         self.errors = errors
-    
+
     @classmethod
     def parse(cls, output):
         """
         Parse raw output data from Isabelle REPL into a CommandOutput instance.
-        
+
         Args:
             output: Raw output data from Isabelle REPL (a list/tuple with specific structure)
-        
+
         Returns:
             CommandOutput: A parsed CommandOutput instance
         """
@@ -117,7 +114,7 @@ class CommandOutput:
             plugin_output=output[6],
             errors=output[7]
         )
-    
+
     def __repr__(self):
         return (f"CommandOutput(command={repr(self.command)}, "
                 f"range={self.range}, output={self.output}, latex={repr(self.latex)}, "
@@ -132,106 +129,120 @@ class Client:
 
     clients = {} # from client_id to Client instance
 
-    def __init__(self, addr : str, thy_qualifier : str, timeout : int | None = 3600):
+    def __init__(self, addr: str, thy_qualifier: str, timeout: int | None = 3600):
         """
-        Create a client and connect it to `addr`.
-
-        Arghument `thy_qualifier` is the session name used to parse short theory names,
-        which will be qualified by this qualifier.
-        Besides, any created theories during the evaluation will be qualified under
-        `thy_qualifier`.
-
-        For example, if you want to evaluate `$ISABELLE_HOME/src/HOL/List.thy`
-        which imports `Lifting_Set` which is a short name while its full name
-        is `HOL.Lifting_Set`.
-        In this case, you must indicate `thy_qualifier = "HOL"`. Otherwise,
-        the REPL cannot determine which import target do you mean.
-
-        As another example, to evaluate
-        `$AFP/thys/WebAssembly/Wasm_Printing/Wasm_Interpreter_Printing_Pure.thy`
-        you should indicate `thy_qualifier = "WebAssembly"`.
-
-        Basically, whenever you evaluate some existing file, the `thy_qualifier`
-        should be the session name of that file.
-
-        If you are unaware of the session name of a file, you could call
-        `Client.session_name_of` to enquiry.
-
-        You could also call `Client.set_thy_qualifier` to change this `thy_qualifier`
-        after initialization.
+        Initialize client attributes only. Use `Client.create()` to construct
+        a connected client instance.
         """
         if not isinstance(thy_qualifier, str):
             raise ValueError("the argument thy_qualifier must be a string")
 
-        def parse_address(address):
-            host, port = address.split(':')
-            return (host, int(port))
-
         self.addr = addr
-        host, port = parse_address(addr)
-        self.sock = socket.create_connection((host, port), timeout=timeout)
-        self.cout = self.sock.makefile('wb')
-        self.cin = self.sock.makefile('rb', buffering=0)
-        self.unpack = mp.Unpacker(self.cin)
+        self.thy_qualifier = thy_qualifier
+        self.timeout = timeout
+        self.reader: asyncio.StreamReader | None = None
+        self.writer: asyncio.StreamWriter | None = None
+        self.unpack = mp.Unpacker()  # feed mode: no stream arg
+        self.pid: int | None = None
+        self.client_id: int | None = None
 
-        mp.pack(__version__, self.cout)
-        mp.pack(thy_qualifier, self.cout)
-        self.cout.flush()
-        (self.pid, self.client_id) = Client._parse_control_(self.unpack.unpack())
-        Client.clients[self.client_id] = self
+    @staticmethod
+    def _parse_address(address):
+        host, port = address.split(':')
+        return (host, int(port))
 
-    def _send_call1(self, cmd, data):
-        if self.cout.closed:
+    async def _feed_and_unpack(self) -> Any:
+        """Read bytes from StreamReader, feed to Unpacker, return next msgpack object."""
+        assert self.reader is not None, "Client not connected — use 'async with' or call __aenter__ first"
+        while True:
+            try:
+                return self.unpack.unpack()
+            except mp.OutOfData:
+                data = await self.reader.read(65536)
+                if not data:
+                    raise ConnectionResetError("peer closed connection")
+                self.unpack.feed(data)
+
+    async def _write(self, *args):
+        """Pack and send one or more msgpack values, then drain."""
+        if self.writer is None or self.writer.is_closing():
             raise REPLFail(f"Client {self.client_id} is dead or closed")
-        mp.pack(cmd, self.cout)
-        mp.pack(data, self.cout)
-        self.cout.flush()
-    def _read(self):
-        return Client._parse_control_(self.unpack.unpack())
+        for a in args:
+            self.writer.write(mp.packb(a))  # type: ignore[arg-type]
+        await self.writer.drain()
+
+
+    async def _read(self):
+        return Client._parse_control_(await self._feed_and_unpack())
 
     def _chk_live(self):
-        if self.cout.closed or self.cin.closed:
+        if self.writer is None or self.writer.is_closing():
             raise REPLFail(f"Client {self.client_id} is dead or closed")
 
-    @staticmethod
-    def test_server(addr, timeout=60):
+    @classmethod
+    async def test_server(cls, addr, timeout=60):
         host, port = addr.split(':')
-        with socket.create_connection((host, port), timeout=timeout) as sock:
-            with sock.makefile('wb') as cout:
-                with sock.makefile('rb', buffering=0) as cin:
-                    unpack = mp.Unpacker(cin)
-                    mp.pack("heartbeat", cout)
-                    cout.flush()
-                    Client._parse_control_(unpack.unpack())
+        reader, writer = await asyncio.open_connection(host, port)
+        try:
+            unpack = mp.Unpacker()
+            writer.write(mp.packb("heartbeat"))  # type: ignore[arg-type]
+            await writer.drain()
+            while True:
+                try:
+                    result = unpack.unpack()
+                    break
+                except mp.OutOfData:
+                    data = await reader.read(65536)
+                    if not data:
+                        raise ConnectionResetError("peer closed connection")
+                    unpack.feed(data)
+            Client._parse_control_(result)
+        finally:
+            writer.close()
+            await writer.wait_closed()
 
 
-    def __enter__(self):
+    async def __aenter__(self):
+        host, port = self._parse_address(self.addr)
+        self.reader, self.writer = await asyncio.open_connection(host, port)
+        await self._write(__version__, self.thy_qualifier)
+        (self.pid, self.client_id) = Client._parse_control_(await self._feed_and_unpack())
+        Client.clients[self.client_id] = self
         return self
-    def __exit__(self, exc_type, exc_value, traceback):
+    async def __aexit__(self, exc_type, exc_value, traceback):
         self.close()
 
-    @staticmethod
-    def kill_client(addr, client_id, timeout=60) -> bool:
+    @classmethod
+    async def kill_client(cls, addr, client_id, timeout=60) -> bool:
         host, port = addr.split(':')
-        with socket.create_connection((host, port), timeout=timeout) as sock:
-            with sock.makefile('wb') as cout:
-                with sock.makefile('rb', buffering=0) as cin:
-                    unpack = mp.Unpacker(cin)
-                    mp.pack("kill " + str(client_id), cout)
-                    cout.flush()
-                    return Client._parse_control_(unpack.unpack())
+        reader, writer = await asyncio.open_connection(host, port)
+        try:
+            unpack = mp.Unpacker()
+            writer.write(mp.packb("kill " + str(client_id)))  # type: ignore[arg-type]
+            await writer.drain()
+            while True:
+                try:
+                    result = unpack.unpack()
+                    break
+                except mp.OutOfData:
+                    data = await reader.read(65536)
+                    if not data:
+                        raise ConnectionResetError("peer closed connection")
+                    unpack.feed(data)
+            return Client._parse_control_(result)
+        finally:
+            writer.close()
+            await writer.wait_closed()
 
 
     def close(self):
-        self.cout.close()
-        self.cin.close()
-        self.sock.close()
+        if self.writer is not None:
+            try:
+                self.writer.close()
+            except:
+                pass
         try:
             del Client.clients[self.client_id]
-        except:
-            pass
-        try:
-            Client.kill_client(self.addr, self.client_id)
         except:
             pass
 
@@ -242,7 +253,7 @@ class Client:
         else:
             raise REPLFail(ret[1])
 
-    def eval(self, source, timeout=None, cmd_timeout=None, import_dir=None, base_dir=None, configs=None):
+    async def eval(self, source, timeout=None, cmd_timeout=None, import_dir=None, base_dir=None, configs=None):
         """
         The `eval` method ONLY accepts **complete** commands ---
         It is strictly forbiddened to split a command into multiple fragments and
@@ -290,18 +301,16 @@ class Client:
         if base_dir is not None:
             base_dir = os.path.abspath(base_dir)
         if timeout is None and import_dir is None and timeout is None and cmd_timeout is None and configs is None:
-            mp.pack(source, self.cout)
+            await self._write(source)
         else:
-            mp.pack("\x05eval", self.cout)
-            mp.pack((source, timeout, cmd_timeout, import_dir, base_dir, configs), self.cout)
-        self.cout.flush()
-        ret = Client._parse_control_(self.unpack.unpack())
+            await self._write("\x05eval", (source, timeout, cmd_timeout, import_dir, base_dir, configs))
+        ret = Client._parse_control_(await self._feed_and_unpack())
         if ret is None:
             return None
         else:
             return [CommandOutput.parse(output) for output in ret]
 
-    def set_trace(self, trace):
+    async def set_trace(self, trace):
         """
         By default, Isabelle REPL will collect all the output of every command,
         which causes the evaluation very slow.
@@ -311,19 +320,17 @@ class Client:
         self._chk_live()
         if not isinstance(trace, bool):
             raise ValueError("the argument trace must be a string")
-        mp.pack("\x05trace" if trace else "\x05notrace", self.cout)
-        self.cout.flush()
-        Client._parse_control_(self.unpack.unpack())
+        await self._write("\x05trace" if trace else "\x05notrace")
+        Client._parse_control_(await self._feed_and_unpack())
 
-    def set_register_thy(self, value):
+    async def set_register_thy(self, value):
         self._chk_live()
         if not isinstance(value, bool):
             raise ValueError("the argument value must be a string")
-        mp.pack("\x05register_thy" if value else "\x05no_register_thy", self.cout)
-        self.cout.flush()
-        Client._parse_control_(self.unpack.unpack())
+        await self._write("\x05register_thy" if value else "\x05no_register_thy")
+        Client._parse_control_(await self._feed_and_unpack())
 
-    def lex(self, source):
+    async def lex(self, source):
         """
         This method splits the given `source` into a sequence of code pieces.
         Each piece is a string led by the keyword of a command, and no symbol
@@ -335,26 +342,22 @@ class Client:
         self._chk_live()
         if not isinstance(source, str):
             raise ValueError("the argument source must be a string")
-        mp.pack("\x05lex", self.cout)
-        mp.pack(source, self.cout)
-        self.cout.flush()
-        ret = Client._parse_control_(self.unpack.unpack())
+        await self._write("\x05lex", source)
+        ret = await self._read()
         ret = [(Position.unpack(pos), src) for pos, src in ret]
         #__repair_positions__(ret)
         return ret
 
-    def lex_file(self, file):
+    async def lex_file(self, file):
         self._chk_live()
         if not isinstance(file, str):
             raise ValueError("the argument file must be a string")
-        mp.pack("\x05lex_file", self.cout)
-        mp.pack(os.path.abspath(file), self.cout)
-        self.cout.flush()
-        ret = Client._parse_control_(self.unpack.unpack())
+        await self._write("\x05lex_file", os.path.abspath(file))
+        ret = await self._read()
         ret = [(IsabellePosition.unpack(pos), src) for pos, src in ret]
         return ret
 
-    def fast_lex(self, source):
+    async def fast_lex(self, source):
         """
         A faster but inaccurate version of `lex`.
         `lex` has to load all imports of the target source in order to use the correct
@@ -365,15 +368,13 @@ class Client:
         self._chk_live()
         if not isinstance(source, str):
             raise ValueError("the argument source must be a string")
-        mp.pack("\x05lex'", self.cout)
-        mp.pack(source, self.cout)
-        self.cout.flush()
-        ret = Client._parse_control_(self.unpack.unpack())
+        await self._write("\x05lex'", source)
+        ret = await self._read()
         ret = [(Position.unpack(pos), src) for pos, src in ret]
         #__repair_positions__(ret)
         return ret
 
-    def plugin(self, name, ML, thy='Isa_REPL.Isa_REPL'):
+    async def plugin(self, name, ML, thy='Isa_REPL.Isa_REPL'):
         """
         Isa-REPL allows clients to insert user-specific plugins to collect data
         directly from Isabelle's internal representations about proof states, lemma
@@ -397,6 +398,7 @@ class Client:
 
         Type `Toplevel.state` represents the entire state of an Isabelle evaluation
         context. This type is defined in `$ISABELLE_HOME/src/Pure/Isar/toplevel.ML`.
+
         The same file also provides useful interfaces to allow you to for example,
         access the proof state by `Toplevel.proof_of`.
         ($ISABELLE_HOME is the base directory of your Isabelle installation,
@@ -424,14 +426,10 @@ class Client:
             raise ValueError("the argument name must be a string")
         if not isinstance(ML, str):
             raise ValueError("the argument ML must be a string")
-        mp.pack("\x05plugin", self.cout)
-        mp.pack(thy, self.cout)
-        mp.pack(name, self.cout)
-        mp.pack(ML, self.cout)
-        self.cout.flush()
-        return Client._parse_control_(self.unpack.unpack())
+        await self._write("\x05plugin", thy, name, ML)
+        return Client._parse_control_(await self._feed_and_unpack())
 
-    def unplugin(self, name):
+    async def unplugin(self, name):
         """
         Remove an installed plugin.
         Argument `name` must be the name passed to the `plugin` method.
@@ -440,12 +438,10 @@ class Client:
         self._chk_live()
         if not isinstance(name, str):
             raise ValueError("the argument name must be a string")
-        mp.pack("\x05unplugin", self.cout)
-        mp.pack(name, self.cout)
-        self.cout.flush()
-        Client._parse_control_(self.unpack.unpack())
+        await self._write("\x05unplugin", name)
+        Client._parse_control_(await self._feed_and_unpack())
 
-    def record_state(self, name):
+    async def record_state(self, name):
         """
         Record the current evaluation state so that later you could rollback to
         this state using name `name`.
@@ -453,21 +449,18 @@ class Client:
         self._chk_live()
         if not isinstance(name, str):
             raise ValueError("the argument name must be a string")
-        mp.pack("\x05record", self.cout)
-        mp.pack(name, self.cout)
-        self.cout.flush()
-        Client._parse_control_(self.unpack.unpack())
+        await self._write("\x05record", name)
+        Client._parse_control_(await self._feed_and_unpack())
 
-    def clean_history(self):
+    async def clean_history(self):
         """
         Remove all recorded states.
         """
         self._chk_live()
-        mp.pack("\x05clean_history", self.cout)
-        self.cout.flush()
-        Client._parse_control_(self.unpack.unpack())
+        await self._write("\x05clean_history")
+        Client._parse_control_(await self._feed_and_unpack())
 
-    def rollback(self, name):
+    async def rollback(self, name):
         """
         Rollback to a recorded evaluation state named `name`.
         This method returns a description about the state just restored.
@@ -477,13 +470,11 @@ class Client:
         self._chk_live()
         if not isinstance(name, str):
             raise ValueError("the argument name must be a string")
-        mp.pack("\x05rollback", self.cout)
-        mp.pack(name, self.cout)
-        self.cout.flush()
-        ret = Client._parse_control_(self.unpack.unpack())
+        await self._write("\x05rollback", name)
+        ret = Client._parse_control_(await self._feed_and_unpack())
         return CommandOutput.parse(ret)
 
-    def history(self) -> dict[str, CommandOutput]:
+    async def history(self) -> dict[str, CommandOutput]:
         """
         Returns the names of all recorded states
         This method returns descriptions about all the recorded states.
@@ -491,13 +482,12 @@ class Client:
         `output` be an empty list, and `latex` be NONE, because no command is executed.
         """
         self._chk_live()
-        mp.pack("\x05history", self.cout)
-        self.cout.flush()
-        ret = Client._parse_control_(self.unpack.unpack())
+        await self._write("\x05history")
+        ret = Client._parse_control_(await self._feed_and_unpack())
         return {k: CommandOutput.parse(v) for k, v in ret.items()}
 
 
-    def hammer (self, timeout):
+    async def hammer (self, timeout):
         """
         Invoke Isabelle Sledgehammer within an indicated timeout (in seconds, and 0 means no timeout).
         Returns obtained tactic scripts if succeeds; or raises REPLFail on failure.
@@ -523,12 +513,10 @@ class Client:
         self._chk_live()
         if not isinstance(timeout, int):
             raise ValueError("the argument name must be an integer")
-        mp.pack("\x05hammer", self.cout)
-        mp.pack(timeout, self.cout)
-        self.cout.flush()
-        return Client._parse_control_(self.unpack.unpack())
+        await self._write("\x05hammer", timeout)
+        return Client._parse_control_(await self._feed_and_unpack())
 
-    def context(self, pp='pretty'):
+    async def context(self, pp='pretty'):
         """
         @return:
         A tuple of (
@@ -550,10 +538,8 @@ class Client:
         self._chk_live()
         if not isinstance(pp, str):
             raise ValueError("the argument pp must be a string")
-        mp.pack("\x05context", self.cout)
-        mp.pack(pp, self.cout)
-        self.cout.flush()
-        return Client._parse_control_(self.unpack.unpack())
+        await self._write("\x05context", pp)
+        return Client._parse_control_(await self._feed_and_unpack())
 
     @staticmethod
     def parse_ctxt(raw):
@@ -566,11 +552,11 @@ class Client:
             'goals': raw[4]
         }
 
-    def silly_context(self, s_expr):
+    async def silly_context(self, s_expr):
         self._chk_live()
-        return Client.parse_ctxt(self.context(s_expr))
+        return Client.parse_ctxt(await self.context(s_expr))
 
-    def sexpr_term(self, term):
+    async def sexpr_term(self, term):
         """
         Parse a term and translate it into S-expression that reveals the full names
         of all overloaded notations.
@@ -581,12 +567,10 @@ class Client:
         self._chk_live()
         if not isinstance(term, str):
             raise ValueError("the argument term must be a string")
-        mp.pack("\x05sexpr_term", self.cout)
-        mp.pack(term, self.cout)
-        self.cout.flush()
-        return Client._parse_control_(self.unpack.unpack())
+        await self._write("\x05sexpr_term", term)
+        return Client._parse_control_(await self._feed_and_unpack())
 
-    def fact(self, names):
+    async def fact(self, names):
         """
         Retreive a fact like a lemma, a theorem, or a corollary.
         The argument `names` has the same syntax with the argument of Isabelle command `thm`.
@@ -597,24 +581,20 @@ class Client:
         self._chk_live()
         if not isinstance(names, str):
             raise ValueError("the argument `names` must be a string")
-        mp.pack("\x05fact", self.cout)
-        mp.pack(names, self.cout)
-        self.cout.flush()
-        return Client._parse_control_(self.unpack.unpack())
+        await self._write("\x05fact", names)
+        return Client._parse_control_(await self._feed_and_unpack())
 
-    def sexpr_fact(self, names):
+    async def sexpr_fact(self, names):
         """
         Similar with `fact` but returns the S-expressions of the terms of the facts.
         """
         self._chk_live()
         if not isinstance(names, str):
             raise ValueError("the argument `names` must be a string")
-        mp.pack("\x05sexpr_fact", self.cout)
-        mp.pack(names, self.cout)
-        self.cout.flush()
-        return Client._parse_control_(self.unpack.unpack())
+        await self._write("\x05sexpr_fact", names)
+        return Client._parse_control_(await self._feed_and_unpack())
 
-    def set_thy_qualifier(self, thy_qualifier):
+    async def set_thy_qualifier(self, thy_qualifier):
         """
         Change `thy_qualifier`.
         See `Client.__init__` for the explaination of `thy_qualifier`
@@ -623,12 +603,10 @@ class Client:
         self._chk_live()
         if not isinstance(thy_qualifier, str):
             raise ValueError("the argument `thy_qualifier` must be a string")
-        mp.pack("\x05qualifier", self.cout)
-        mp.pack(thy_qualifier, self.cout)
-        self.cout.flush()
-        return Client._parse_control_(self.unpack.unpack())
+        await self._write("\x05qualifier", thy_qualifier)
+        return Client._parse_control_(await self._feed_and_unpack())
 
-    def session_name_of(self, path):
+    async def session_name_of(self, path):
         """
         Given a `path` to an Isabelle theory file, `session_name_of` returns
         the name of the session containing the theory file, or None if fails
@@ -637,12 +615,10 @@ class Client:
         self._chk_live()
         if not isinstance(path, str):
             raise ValueError("the argument `path` must be a string")
-        mp.pack("\x05session-of", self.cout)
-        mp.pack(path, self.cout)
-        self.cout.flush()
-        return Client._parse_control_(self.unpack.unpack())
+        await self._write("\x05session-of", path)
+        return Client._parse_control_(await self._feed_and_unpack())
 
-    def run_app(self, name):
+    async def run_app(self, name):
         """
         Run user-defined applications.
         An application is an ML program registered through `REPL_Server.register_app`.
@@ -652,15 +628,13 @@ class Client:
         self._chk_live()
         if not isinstance(name, str):
             raise ValueError("the argument `name` must be a string")
-        mp.pack("\x05app", self.cout)
-        mp.pack(name, self.cout)
-        self.cout.flush()
-        found = Client._parse_control_(self.unpack.unpack())
+        await self._write("\x05app", name)
+        found = Client._parse_control_(await self._feed_and_unpack())
         if not found:
             raise KeyError
         return None
 
-    def run_ML(self, thy, src):
+    async def run_ML(self, thy, src):
         """
         Execute ML code in the global state of the Isabelle runtime.
         """
@@ -669,13 +643,11 @@ class Client:
             raise ValueError("the argument `thy` must be a string")
         if not isinstance(src, str):
             raise ValueError("the argument `src` must be a string")
-        mp.pack("\x05ML", self.cout)
-        mp.pack((thy, src), self.cout)
-        self.cout.flush()
-        Client._parse_control_(self.unpack.unpack())
+        await self._write("\x05ML", (thy, src))
+        Client._parse_control_(await self._feed_and_unpack())
         return None
 
-    def load_theory(self, targets, thy_qualifier=""):
+    async def load_theory(self, targets, thy_qualifier=""):
         """
         Load theories. Short names can be used if the thy_qualifier is indicated.
         Otherwise, full names must be used.
@@ -688,12 +660,10 @@ class Client:
             raise ValueError("the argument `thy_qualifier` must be a string")
         if not is_list_of_strings(targets):
             raise ValueError("the argument `targets` must be a list of strings")
-        mp.pack("\x05load", self.cout)
-        mp.pack((thy_qualifier, targets), self.cout)
-        self.cout.flush()
-        return Client._parse_control_(self.unpack.unpack())
+        await self._write("\x05load", (thy_qualifier, targets))
+        return Client._parse_control_(await self._feed_and_unpack())
 
-    def file(self, path : str, line : int = ~1, column : int = 0,
+    async def file(self, path : str, line : int = ~1, column : int = 0,
              timeout : int | None = None, attrs : list[str] = [],
              cache_position : bool = False, use_cache : bool = False):
         """
@@ -726,24 +696,21 @@ class Client:
         pos = None
         if line >= 0:
             pos = (line, column)
-        mp.pack("\x05file", self.cout)
-        mp.pack((path, pos, timeout, cache_position, use_cache, attrs), self.cout)
-        self.cout.flush()
-        errs = Client._parse_control_(self.unpack.unpack())
+        await self._write("\x05file", (path, pos, timeout, cache_position, use_cache, attrs))
+        errs = Client._parse_control_(await self._feed_and_unpack())
         if errs:
             raise REPLFail('\n'.join(errs))
         return None
 
-    def clean_cache(self):
+    async def clean_cache(self):
         """
         Clean the evaluation cache recorded by the `file` method.
         """
         self._chk_live()
-        mp.pack("\x05clean_cache", self.cout)
-        self.cout.flush()
-        return Client._parse_control_(self.unpack.unpack())
+        await self._write("\x05clean_cache")
+        return Client._parse_control_(await self._feed_and_unpack())
 
-    def add_lib(self, libs):
+    async def add_lib(self, libs):
         """
         Add additional `libs` that will be loaded whenever evaluating a theory.
         :param libs:
@@ -754,53 +721,47 @@ class Client:
         self._chk_live()
         if not is_list_of_strings(libs):
             raise ValueError("the argument `libs` must be a list of strings")
-        mp.pack("\x05addlibs", self.cout)
-        mp.pack(libs, self.cout)
-        self.cout.flush()
-        return Client._parse_control_(self.unpack.unpack())
+        await self._write("\x05addlibs", libs)
+        return Client._parse_control_(await self._feed_and_unpack())
 
-    def num_processor (self):
+    async def num_processor (self):
         """
         :return: the number of processors available
         """
         self._chk_live()
-        mp.pack("\x05numcpu", self.cout)
-        self.cout.flush()
-        ret = Client._parse_control_(self.unpack.unpack())
+        await self._write("\x05numcpu")
+        ret = Client._parse_control_(await self._feed_and_unpack())
         if ret <= 0:
             ret = 1
         return ret
 
-    def set_cmd_timeout(self, timeout):
+    async def set_cmd_timeout(self, timeout):
         """
         Set the timeout for commands other than sledgehammer and auto_sledgehammer.
         """
         self._chk_live()
         if not (isinstance(timeout, int) or timeout is None):
             raise ValueError("the argument `timeout` must be an int or None")
-        mp.pack("\x05cmd_timeout", self.cout)
-        mp.pack(timeout, self.cout)
-        self.cout.flush()
-        return Client._parse_control_(self.unpack.unpack())
+        await self._write("\x05cmd_timeout", timeout)
+        return Client._parse_control_(await self._feed_and_unpack())
 
     def kill(self):
         """
         Kill the entire server
         """
+        assert self.pid is not None, "Client not connected"
         os.kill(self.pid, signal.SIGKILL)
 
-    def path_of_theory(self, theory_name, master_directory):
+    async def path_of_theory(self, theory_name, master_directory):
         self._chk_live()
         if not isinstance(theory_name, str):
             raise ValueError("the argument `theory_name` must be a string")
         if not isinstance(master_directory, str):
             raise ValueError("the argument `master_directory` must be a string")
-        mp.pack("\x05path", self.cout)
-        mp.pack((master_directory, theory_name), self.cout)
-        self.cout.flush()
-        return Client._parse_control_(self.unpack.unpack())
-    
-    def parse_thy_header(self, header_src):
+        await self._write("\x05path", (master_directory, theory_name))
+        return Client._parse_control_(await self._feed_and_unpack())
+
+    async def parse_thy_header(self, header_src):
         """
         Return: (fully_quantified_theory_name, theorys to import, keyword declarations)
         where fully_quantified_theory_name is a string,
@@ -809,7 +770,7 @@ class Client:
         self._chk_live()
         if not isinstance(header_src, str):
             raise ValueError("the argument `header_src` must be a string")
-        lines = self.fast_lex(header_src)
+        lines = await self.fast_lex(header_src)
         theory_line = None
         for _, line in lines:
             if line.strip().startswith('theory'):
@@ -817,26 +778,22 @@ class Client:
                 break
         if not theory_line:
             raise ValueError("no `theory` declaration found in the given `header_src`")
-        mp.pack("\x05thy_header", self.cout)
-        mp.pack(theory_line, self.cout)
-        self.cout.flush()
-        return Client._parse_control_(self.unpack.unpack())
-    
-    def translate_position(self, src : str) -> Callable[[int | IsabellePosition], int | Position]:
+        await self._write("\x05thy_header", theory_line)
+        return Client._parse_control_(await self._feed_and_unpack())
+
+    async def translate_position(self, src : str) -> Callable[[int | IsabellePosition], int | Position]:
         if not isinstance(src, str):
             raise ValueError("the argument `src` must be a string")
-        mp.pack("\x05symbpos", self.cout)
-        mp.pack(src, self.cout)
-        self.cout.flush()
-        symbs = Client._parse_control_(self.unpack.unpack())
-        
+        await self._write("\x05symbpos", src)
+        symbs = Client._parse_control_(await self._feed_and_unpack())
+
         # Implementation of column_of_pos functionality from SML
         # symbs is a list of strings (symbols), equivalent to Vector.map fst (Symbol_Pos.explode ...)
         # In SML, vectors are 1-indexed, but Python lists are 0-indexed
         ofs = 1
         line = 1
         colm = 1
-        
+
         def calc(offset):
             nonlocal ofs, line, colm, symbs
             """Calculate line and column for a given offset (1-based)"""
@@ -847,7 +804,7 @@ class Client:
                 ofs = 1
                 line = 1
                 colm = 0
-            
+
             # Walk through symbols until we reach the target offset
             # ofs is 1-based index, so we subtract 1 to access Python list
             while ofs < offset:
@@ -868,7 +825,7 @@ class Client:
                 return colm - len(s) + 1
             else:
                 return colm
-        
+
         def translate(pos):
             if isinstance(pos, int):
                 return calc(pos)
@@ -879,8 +836,8 @@ class Client:
                 raise TypeError("`pos` must be either an IsabellePosition or an integer")
         return translate
 
-    
-    def premise_selection(self, mode, number : int, methods : list[str], params : dict[str, str] = {}, printer : str='pretty'):
+
+    async def premise_selection(self, mode, number : int, methods : list[str], params : dict[str, str] = {}, printer : str='pretty'):
         """
         Conduct the premise selection provided by Sledgehammer.
         @param number: the number of relevant premises to return
@@ -910,30 +867,27 @@ class Client:
             raise ValueError("the argument `printer` must be a string")
         if not isinstance(mode, str):
             raise ValueError("the argument `mode` must be a string")
-        mp.pack("\x05premise_selection", self.cout)
-        mp.pack((number, methods, params, printer, mode), self.cout)
-        self.cout.flush()
-        return Client._parse_control_(self.unpack.unpack())
+        await self._write("\x05premise_selection", (number, methods, params, printer, mode))
+        return Client._parse_control_(await self._feed_and_unpack())
 
-    def _health_of_clients(self):
+    async def _health_of_clients(self):
         """
         Return a dictionary from the client_id to (live : bool, errors since last check : string list).
         You may use `Client.clients` to check the Client instance from the client_id.
         """
         self._chk_live()
-        mp.pack("\x05diagnosis", self.cout)
-        self.cout.flush()
-        return dict(Client._parse_control_(self.unpack.unpack()))
+        await self._write("\x05diagnosis")
+        return dict(Client._parse_control_(await self._feed_and_unpack()))
 
-    def config(self, atrributes : list[str]):
+    async def config(self, atrributes : list[str]):
         if not isinstance(atrributes, list):
             raise ValueError("the argument `atrributes` must be a list")
         if not all(isinstance(attr, str) for attr in atrributes):
             raise ValueError("every element in `atrributes` must be a string")
-        self._send_call1("\x05config", atrributes)
-        return self._read()
-    
-    def callback(self, name: str, arg=None):
+        await self._write("\x05config", atrributes)
+        return await self._read()
+
+    async def callback(self, name: str, arg=None):
         """
         Call a global callback registered in Isabelle_RPC.
 
@@ -950,25 +904,21 @@ class Client:
         self._chk_live()
         if not isinstance(name, str):
             raise ValueError("the argument `name` must be a string")
-        mp.pack("\x05callback", self.cout)
-        mp.pack(name, self.cout)
-        self.cout.flush()
+        await self._write("\x05callback", name)
         # Phase 1: check if callback exists
-        phase1 = self.unpack.unpack()
+        phase1 = await self._feed_and_unpack()
         if phase1[1] is not None:
             raise REPLFail(phase1[1])
         # Phase 2: send arg and read result
-        mp.pack(arg, self.cout)
-        self.cout.flush()
-        ret = self.unpack.unpack()
+        await self._write(arg)
+        ret = await self._feed_and_unpack()
         if ret[1] is not None:
             raise REPLFail(ret[1])
         return ret[0]
 
     _watchers = {}
-    _watchers_lock = threading.Lock()
     @classmethod
-    def install_watcher(cls, addr, handler, interval : int = 2, allow_multiple_watchers : bool = False, replace_existing : bool = True, verbose = False):
+    async def install_watcher(cls, addr, handler, interval : int = 2, allow_multiple_watchers : bool = False, replace_existing : bool = True, verbose = False):
         """
         Install a watcher to monitor the health of each client regularly.
 
@@ -978,10 +928,10 @@ class Client:
         allow_multiple_watchers: By default, only one watcher is allowed. But you can allow multiple watchers
             by truning on this flag. Note, each error message can only be dispatched to one watcher of the multiple watchers randomly.
         """
-        def _watcher_loop(stop):
-            with Client(addr, 'HOL') as client:
-                while not stop.is_set():
-                    health_of_clients = client._health_of_clients()
+        async def _watcher_loop(cancel_event: asyncio.Event):
+            async with Client(addr, 'HOL') as client:
+                while not cancel_event.is_set():
+                    health_of_clients = await client._health_of_clients()
                     for cid, (is_live, errors) in health_of_clients.items():
                         if verbose or not is_live or errors:
                             handler(cid, (is_live, errors))
@@ -995,26 +945,23 @@ class Client:
                     if bads is not None:
                         for cc in bads:
                             cc.close()
-                    time.sleep(interval)
-        with cls._watchers_lock:
-            if addr in cls._watchers:
-                watchers = cls._watchers[addr]
-            else:
-                watchers = []
-                cls._watchers[addr] = watchers
-            if replace_existing:
-                for _, stop in watchers:
-                    stop.set()
-                watchers.clear()
-            if watchers and not allow_multiple_watchers:
-                raise ValueError("Only one watcher is allowed")
-            stop = threading.Event()
-            watcher_thread = threading.Thread(target=_watcher_loop, args=(stop,))
-            watcher_thread.daemon = True
-            watchers.append((watcher_thread, stop))
-        watcher_thread.start()
+                    try:
+                        await asyncio.wait_for(cancel_event.wait(), timeout=interval)
+                        break  # event was set, stop the loop
+                    except asyncio.TimeoutError:
+                        pass  # timeout expired, continue loop
 
-
-
-
-
+        if addr in cls._watchers:
+            watchers = cls._watchers[addr]
+        else:
+            watchers = []
+            cls._watchers[addr] = watchers
+        if replace_existing:
+            for _, cancel_event in watchers:
+                cancel_event.set()
+            watchers.clear()
+        if watchers and not allow_multiple_watchers:
+            raise ValueError("Only one watcher is allowed")
+        cancel_event = asyncio.Event()
+        task = asyncio.create_task(_watcher_loop(cancel_event))
+        watchers.append((task, cancel_event))
