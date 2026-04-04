@@ -789,7 +789,7 @@ fun startup base_dir_of_theories thy0 addr0 =
                                 output cout packBool true
                               ; BinIO.StreamIO.flushOut cout
                               ; let val conn = (cin, cout, Unsynchronized.ref NONE)
-                                 in action conn end)
+                                 in action conn 0 end)
                        end
                  | other => raise REPL.REPL_fail ("Unknown REPL command" ^ other)
                 end handle REPL.REPL_fail E => report_error cout E
