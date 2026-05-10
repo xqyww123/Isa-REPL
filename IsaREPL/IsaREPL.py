@@ -647,7 +647,7 @@ class Client:
         Client._parse_control_(await self._feed_and_unpack())
         return None
 
-    async def load_theory(self, targets, thy_qualifier=""):
+    async def load_theory(self, targets: list[str], thy_qualifier: str = "") -> list[str]:
         """
         Load theories. Short names can be used if the thy_qualifier is indicated.
         Otherwise, full names must be used.
@@ -710,7 +710,7 @@ class Client:
         await self._write("\x05clean_cache")
         return Client._parse_control_(await self._feed_and_unpack())
 
-    async def add_lib(self, libs):
+    async def add_lib(self, libs: list[str]) -> None:
         """
         Add additional `libs` that will be loaded whenever evaluating a theory.
         :param libs:
