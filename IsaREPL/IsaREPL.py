@@ -142,7 +142,7 @@ class Client:
         self.timeout = timeout
         self.reader: asyncio.StreamReader | None = None
         self.writer: asyncio.StreamWriter | None = None
-        self.unpack = mp.Unpacker()  # feed mode: no stream arg
+        self.unpack = mp.Unpacker(unicode_errors='replace')
         self.pid: int | None = None
         self.client_id: int | None = None
 
@@ -184,7 +184,7 @@ class Client:
         host, port = addr.split(':')
         reader, writer = await asyncio.open_connection(host, port)
         try:
-            unpack = mp.Unpacker()
+            unpack = mp.Unpacker(unicode_errors='replace')
             writer.write(mp.packb("heartbeat"))  # type: ignore[arg-type]
             await writer.drain()
             while True:
@@ -217,7 +217,7 @@ class Client:
         host, port = addr.split(':')
         reader, writer = await asyncio.open_connection(host, port)
         try:
-            unpack = mp.Unpacker()
+            unpack = mp.Unpacker(unicode_errors='replace')
             writer.write(mp.packb("kill " + str(client_id)))  # type: ignore[arg-type]
             await writer.drain()
             while True:
