@@ -98,6 +98,7 @@ val retrieve_fact : string -> Proof.context * thm list
 
 val trim_makrup  : string -> string
 
+
 val sledgehammer : int (*timeout in seconds*) -> string
 
 val premise_selection_each_goal : Sledgehammer_Prover.params ->
@@ -548,7 +549,7 @@ fun catch_state' wid plugin_output err command range s : command_output = {
                             not (Thm.no_prems (#goal (Proof.raw_goal (Toplevel.proof_of s))))
           },
         level   = Toplevel.level s,
-        state   = trim_makrup (Toplevel.string_of_state s),
+        state   = trim_makrup (Toplevel.pretty_state s |> Pretty.chunks |> Pretty.string_of),
         plugin_output = plugin_output,
         errors  = trim_err err,
         range   = range
@@ -678,11 +679,12 @@ fun RE (cfg:cfg) source : command_outputs =
                                 val thy  = Toplevel.end_theory pos s'
                                 val thys'= Symtab.update_new (Context.theory_name {long=true} thy, thy) thys
                                 in Thread_Data.put evaluated_theories (SOME thys')
+                             (*  TODO: FIX ME
                                  ; (Thy_Info.register_thy thy
                                     handle err as Exn.ERROR msg => (
                                       if String.isPrefix "Cannot update finished theory" msg
                                       then ()
-                                      else Exn.reraise err ))
+                                      else Exn.reraise err )) *)
                                end
                               else ()
                             else ()
@@ -965,9 +967,11 @@ fun gen_premise_selection select param override number =
        end
      | NONE      => raise REPL_fail "Not in a proof context." )
 
+
 val premise_selection_each_goal = gen_premise_selection Premise_Selection.SH_select
 val premise_selection_ultimate_goal = gen_premise_selection Premise_Selection.SH_select_ultimate_goal
 val premise_selection_leading_goal = gen_premise_selection Premise_Selection.SH_select_leading_goal
+
 
 (** get context **)
 
