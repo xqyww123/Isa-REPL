@@ -679,12 +679,11 @@ fun RE (cfg:cfg) source : command_outputs =
                                 val thy  = Toplevel.end_theory pos s'
                                 val thys'= Symtab.update_new (Context.theory_name {long=true} thy, thy) thys
                                 in Thread_Data.put evaluated_theories (SOME thys')
-                             (*  TODO: FIX ME
                                  ; (Thy_Info.register_thy thy
                                     handle err as Exn.ERROR msg => (
                                       if String.isPrefix "Cannot update finished theory" msg
                                       then ()
-                                      else Exn.reraise err )) *)
+                                      else Exn.reraise err ))
                                end
                               else ()
                             else ()
