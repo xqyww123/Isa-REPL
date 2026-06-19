@@ -6,7 +6,7 @@
 .*.marks
 *.phi-cache
 *.proof-cache.lock
-*.proof-cache.tmp
+*.proof-cache.tmp*
 
 \#*
 .*#
