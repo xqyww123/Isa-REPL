@@ -5,6 +5,8 @@
 *.swo
 .*.marks
 *.phi-cache
+*.proof-cache.lock
+*.proof-cache.tmp
 
 \#*
 .*#
