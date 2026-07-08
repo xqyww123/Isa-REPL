@@ -423,8 +423,12 @@ fun init_thy ignore_imports {thy_qualifier, base_dir, additional_libs, configs, 
       val header = qualify_name header
 
       (* init theory *)
-      val imports = #imports header
-                  @ map (rpair Position.none) additional_libs
+      (* PREPEND additional_libs (before the target's own imports): the injected
+         libs (e.g. Minilang_Agent) become BASE ancestors that only add tools/
+         certificate lineage, while the target theory's own imports come LAST so
+         the target's own syntax/notation wins on any conflict. *)
+      val imports = map (rpair Position.none) additional_libs
+                  @ #imports header
       val evaluated_theories = the_default Symtab.empty (Thread_Data.get evaluated_theories)
       val _ = if Symtab.defined evaluated_theories (#1 sname)
               then raise REPL_fail ("Theory " ^ #1 sname ^ " has been defined.")
