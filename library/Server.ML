@@ -253,8 +253,20 @@ fun spawn_worker conn =
   end
 *)
 
-fun startup base_dir_of_theories thy0 addr0 =
-  let val _ = if File.is_dir base_dir_of_theories
+fun startup base_dir_of_theories0 thy0 addr0 =
+  (* Absolutise the base dir HERE, once, where it enters the server -- the
+     documented invocation is `./repl_server.sh <addr> HOL ./tmp`, i.e. relative.
+     Everything downstream resolves paths against the process-global cwd, and
+     load_group (REPL.ML) chdirs per master_dir group while loading, so a
+     relative base dir means the SAME path denotes different directories at
+     different moments.  Concretely that breaks: the is_dir/mkDir below, the
+     master_dir stored in each theory (Resources.begin_theory keeps the spelling
+     it is given), parse_text's `master_directory = base_dir` guard (which
+     compares Path.expand, and expand substitutes variables but never consults
+     the cwd), and any consumer keyed on the theory's master_dir.
+     Path.expand alone is not enough: it resolves ~ and $VAR, not `./tmp`. *)
+  let val base_dir_of_theories = File.absolute_path base_dir_of_theories0
+      val _ = if File.is_dir base_dir_of_theories
               then warning ("The base_dir_of_theories already exists. The shell may overwrite files.")
               else if File.exists base_dir_of_theories
               then error ("The base_dir_of_theories must be a directory : " ^ File.standard_path base_dir_of_theories)
@@ -370,11 +382,15 @@ fun startup base_dir_of_theories thy0 addr0 =
                   position_label = NONE,
                   additional_libs = #additional_libs (!cfg),
                   configs = #configs (!cfg),
-                  import_dir = SOME (Path.dir path),
+                  (* absolutised for the same reason as in `startup`: the client
+                     sends this path raw (the Python client abspaths it for `eval`
+                     but not for `file`), and a relative one is resolved against a
+                     cwd that load_group moves. *)
+                  import_dir = SOME (File.absolute_path (Path.dir path)),
                   single_cmd_timeout = #single_cmd_timeout (!cfg),
                   attributes = (case attrs of SOME a => a
                                             | NONE => #attributes (!cfg)),
-                  base_dir = Path.dir path,
+                  base_dir = File.absolute_path (Path.dir path),
                   write_thy = false }
             end
 
