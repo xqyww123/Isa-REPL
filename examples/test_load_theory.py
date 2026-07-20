@@ -13,15 +13,15 @@ async def main():
     print("=== Test 1: load_theory ===")
     async with Client(addr, 'HOL') as c:
         await c.set_trace(False)
-        ret = await c.load_theory(['MathBench_Prover.MathBench_Prover', 'Minilang_Agent.Minilang_Agent'])
-        assert ret == ['MathBench_Prover.MathBench_Prover', 'Minilang_Agent.Minilang_Agent'], f"Unexpected: {ret}"
+        ret = await c.load_theory(['MathBench_Prover.MathBench_Prover', 'Minilang_AoA.Minilang_AoA'])
+        assert ret == ['MathBench_Prover.MathBench_Prover', 'Minilang_AoA.Minilang_AoA'], f"Unexpected: {ret}"
         print("OK")
 
     # Test 2: add_lib makes theories auto-imported as ancestors
     print("=== Test 2: add_lib auto-imports ===")
     async with Client(addr, 'HOL') as c:
         await c.set_trace(True)
-        await c.add_lib(['MathBench_Prover.MathBench_Prover', 'Minilang_Agent.Minilang_Agent'])
+        await c.add_lib(['MathBench_Prover.MathBench_Prover', 'Minilang_AoA.Minilang_AoA'])
         ret = await c.eval(
             'theory Test imports Main begin\n'
             'ML \\<open>\n'

@@ -424,7 +424,7 @@ fun init_thy ignore_imports {thy_qualifier, base_dir, additional_libs, configs, 
 
       (* init theory *)
       (* PREPEND additional_libs (before the target's own imports): the injected
-         libs (e.g. Minilang_Agent) become BASE ancestors that only add tools/
+         libs (e.g. Minilang_AoA) become BASE ancestors that only add tools/
          certificate lineage, while the target theory's own imports come LAST so
          the target's own syntax/notation wins on any conflict. *)
       val imports = map (rpair Position.none) additional_libs
