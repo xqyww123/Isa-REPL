@@ -111,6 +111,18 @@ session REPL$$ = "$(printf '%b' $BASE_SESSION)"
 EOF
 
 echo 1000 > /proc/$$/oom_score_adj
+
+# A REPL server is headless: no Active.dialog can ever be answered here, so
+# force the RPC dialogue policy off (belt-and-braces -- the frontend probe of
+# Isabelle_RPC's Dialogue also detects the build form -- and it saves the
+# per-call probe round trip).  Conditional on the Isabelle_RPC component being
+# registered (its etc/settings sets ISABELLE_RPC_HOME): with the component
+# unregistered the option is undeclared and `isabelle build` would abort on an
+# unknown -o.
+if [ -n "$(isabelle getenv -b ISABELLE_RPC_HOME)" ]; then
+  options="$options -o isabelle_rpc_dialogue=absent"
+fi
+
 echo isabelle build -D $DIR $options REPL$$
 REPL_DEFAULT_SESSION="$(printf '%b' $BASE_SESSION)" REPL_PID=$$ isabelle build -o quick_and_dirty=true -D $DIR $options REPL$$
 
