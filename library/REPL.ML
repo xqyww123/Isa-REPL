@@ -959,7 +959,8 @@ fun sledgehammer timeout' =
                     proof_id = NONE,
                     timeout = NONE,      (*stays NONE: the physical Timeout.apply above is ours*)
                     read_store = NONE, write_store = NONE,
-                    raise_Error_instead_of_Auto_Fail = true}
+                    raise_Error_instead_of_Auto_Fail = true,
+                    failure_msg = NONE}
                    ctxt goal
         (*One of the two sanctioned joins: this call is always async = false, so
           the future is a Future.value and joining costs nothing -- and the proof
