@@ -952,8 +952,19 @@ fun sledgehammer timeout' =
                        else Config.map Phi_Sledgehammer_Solver.sledgehammer_params
                                  (fn s => "timeout = " ^ string_of_int timeout' ^ ", " ^ s))
            val goal = Proof.goal stat |> #goal
-           val (prf, _) = Phi_Sledgehammer_Solver.auto true Sledgehammer_Fact.no_fact_override NONE NONE ctxt goal
-        in prf
+           val (prf, _) =
+                 Phi_Sledgehammer_Solver.auto
+                   {improved = true, async = false,
+                    fact_override = Sledgehammer_Fact.no_fact_override,
+                    proof_id = NONE,
+                    timeout = NONE,      (*stays NONE: the physical Timeout.apply above is ours*)
+                    read_store = NONE, write_store = NONE,
+                    raise_Error_instead_of_Auto_Fail = true}
+                   ctxt goal
+        (*One of the two sanctioned joins: this call is always async = false, so
+          the future is a Future.value and joining costs nothing -- and the proof
+          text is exactly what we owe the REPL client.*)
+        in Future.join prf
        end) ()
        end
      | NONE      => raise REPL_fail "Not in a proof context." )

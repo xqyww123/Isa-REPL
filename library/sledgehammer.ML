@@ -250,7 +250,7 @@ fun search_proof'i (ctxt,sequent) =
 if no_cache
           then (tracing ("Proof cache miss, " ^ id))
           else (warning "The cached proof fails. Re-searching proofs...";
-                Phi_Cache_DB.invalidate_proof_cache (not no_cache) id thy) ;
+                Phi_Proof_Store.invalidate_proof_cache (not no_cache) id thy) ;
           find_proof ())) *)
    end
 (* val proof = raw_sledgehammer stat *)
