@@ -948,9 +948,12 @@ fun sledgehammer timeout' =
        let val timeout = Time.fromSeconds timeout'
         in (if timeout' <= 0 then I else Timeout.apply_physical timeout) (fn () => let
            val ctxt = Proof.context_of stat
-                   |> (if timeout' <= 0 then I 
+                   |> (if timeout' <= 0 then I
                        else Config.map Phi_Sledgehammer_Solver.sledgehammer_params
-                                 (fn s => "timeout = " ^ string_of_int timeout' ^ ", " ^ s))
+                                 (*no separator onto an empty config: the strict
+                                   params parser rejects a dangling ", " tail*)
+                                 (fn s => "timeout = " ^ string_of_int timeout' ^
+                                          (if s = "" then "" else ", " ^ s)))
            val goal = Proof.goal stat |> #goal
            val (prf, _) =
                  Phi_Sledgehammer_Solver.auto
