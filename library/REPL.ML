@@ -957,15 +957,20 @@ fun sledgehammer timeout' =
            val goal = Proof.goal stat |> #goal
            val (prf, _) =
                  Phi_Sledgehammer_Solver.auto
-                   {improved = true, async = false,
+                   {improved = true, async_mode = Phi_Sledgehammer_Solver.Sync,
                     fact_override = Sledgehammer_Fact.no_fact_override,
                     proof_id = NONE,
                     timeout = NONE,      (*stays NONE: the physical Timeout.apply above is ours*)
-                    read_store = NONE, write_store = NONE,
-                    raise_Error_instead_of_Auto_Fail = true,
-                    failure_msg = NONE}
+                    read_store = NONE, write_store = NONE}
                    ctxt goal
-        (*One of the two sanctioned joins: this call is always async = false, so
+                 (*Sync hands back a raw Auto_Fail; rendering it is ours to do, or
+                   the client would receive "exception Auto_Fail raised".
+                   Internal_Failure keeps its own payload.*)
+                 handle Phi_Sledgehammer_Solver.Auto_Fail
+                          (Phi_Sledgehammer_Solver.Internal_Failure msg) => error msg
+                      | Phi_Sledgehammer_Solver.Auto_Fail _ =>
+                          error (Phi_Sledgehammer_Solver.error_message ctxt goal)
+        (*One of the two sanctioned joins: this call is always Sync, so
           the future is a Future.value and joining costs nothing -- and the proof
           text is exactly what we owe the REPL client.*)
         in Future.join prf
