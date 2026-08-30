@@ -95,6 +95,7 @@ fun reg thy = Thy_Info.register_thy thy
     if String.isPrefix "Cannot update finished theory" msg then ()
     else raise (ERROR msg) ;
 reg @{theory Performant_Isabelle_ML} ;
+reg @{theory SSymb} ;
 reg @{theory Remote_Procedure_Calling} ;
 reg @{theory Auto_Sledgehammer} ;
 reg @{theory Isa_REPL} ;
