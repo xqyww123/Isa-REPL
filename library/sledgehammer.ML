@@ -83,7 +83,7 @@ fun eval_prf_str timeout "" (ctxt,sequent) =
   | eval_prf_str timeout prf (ctxt,sequent) =
       \<^try>\<open>
        let val seq =
-            Method.evaluate (
+            Method.evaluate_runtime (
               Parse.read_embedded ctxt (Thy_Header.get_keywords (Proof_Context.theory_of ctxt))
                                        Method.parse (Input.string prf)
                 |> fst
