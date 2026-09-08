@@ -973,7 +973,7 @@ fun sledgehammer timeout' =
         (*One of the two sanctioned joins: this call is always Sync, so
           the future is a Future.value and joining costs nothing -- and the proof
           text is exactly what we owe the REPL client.*)
-        in Future.join prf
+        in snd (Future.join prf)
        end) ()
        end
      | NONE      => raise REPL_fail "Not in a proof context." )
