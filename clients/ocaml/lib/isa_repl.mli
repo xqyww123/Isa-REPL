@@ -162,7 +162,7 @@ module Client : sig
   (** Enable/disable output tracing *)
 
   val set_register_thy : t -> bool -> unit
-  (** Enable/disable theory registration *)
+  (** Set the recording switch: whether evaluated theories are recorded into this connection's theory table (not the theory loader). Default on. *)
 
   val set_thy_qualifier : t -> string -> unit
   (** Change theory qualifier *)

@@ -48,7 +48,7 @@
 - [x] set_trace - 设置跟踪
 - [x] set_thy_qualifier - 设置理论限定符
 - [x] set_cmd_timeout - 设置命令超时
-- [x] set_register_thy - 设置理论注册
+- [x] set_register_thy - 设置记录开关（是否把求值出的 theory 记入本连接的表；与 Isabelle 的 theory loader 无关）
 
 **插件系统**:
 - [x] plugin - 安装插件

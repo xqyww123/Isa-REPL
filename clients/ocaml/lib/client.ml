@@ -3,7 +3,7 @@
 open Exceptions
 
 (** Client version *)
-let version = "0.13.0"
+let version = "0.15.0"
 
 (** Message types *)
 type message_type = NORMAL | TRACING | WARNING
@@ -202,7 +202,7 @@ let set_trace client trace =
   let _ = send_command client msg in
   ()
 
-(** Set register theory flag *)
+(** Set the recording switch: whether theories evaluated on this connection are recorded into its theory table (not Isabelle's theory loader). Default on. *)
 let set_register_thy client value =
   let msg = Msgpck.of_string (if value then "\x05register_thy" else "\x05no_register_thy") in
   let _ = send_command client msg in

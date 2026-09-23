@@ -70,6 +70,17 @@ Sledgehammer (via our `auto_sledgehamemr` wrapper, see [example](./examples/exam
 ### Communication Protocol
 
 It is possible to implement a client in other languages. However, the document for the communication protocol is not provided and I refer you to read our source code, as it should be simple enough.
+### Theory tables and their lifetime
+
+Each connection keeps its own theory table: the theories it evaluates with `theory ... end` are recorded there, under their long names, as long as the recording switch is on (`set_register_thy`, on by default). A second table, shared by all connections of the server, exists for future use. When the REPL resolves an import it looks in the connection's table first, then the shared table, then Isabelle's own theory loader.
+
+The recording switch only controls that recording; it never registers anything into Isabelle's theory loader. With recording off, a later `theory B imports A` in the same connection cannot see A in this connection's theory table, so Isabelle looks for A.thy on disk: an error (No such file) if A only ever existed as source sent over the socket, or a silent reload of the on-disk file if A's source file exists.
+
+Entries live until the connection closes or `clear_evaluated_theories` is called; `clear_evaluated_theories(True)` also clears the shared table, which affects every connection. `rollback` restores the toplevel state but does not roll back the theory table.
+
+Re-evaluating a theory of the same base name replaces the old entry and drops any recorded theory whose ancestry contained the old one, so that importing the new theory does not hit the kernel's "Duplicate theory name". This does invalidate recorded dependants that were built, through this same table, on the old theory. There remain four ways a superseded theory can stay reachable — same-connection rollback, cross-connection rollback through the file cache, the two separate tables, and shadowing in the other direction — all inherent to the kernel's base-name rule and left as they are.
+
+`path_of_theory` returns the absolute path of a theory's source file, and answers only for theories whose source file exists on disk; it raises otherwise.
 ## Contribution
 
 Feel free to open any GitHub issue if you have any feature requests.
