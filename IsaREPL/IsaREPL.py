@@ -129,6 +129,11 @@ class Client:
 
     clients = {} # from client_id to Client instance
 
+    # Wire protocol version sent at the handshake; the server (Server.ML,
+    # `protocol_version`) accepts exactly this string. Independent of the
+    # package version `__version__`, so an editable install needs no reinstall.
+    PROTOCOL_VERSION = "0.15.0"
+
     def __init__(self, addr: str, thy_qualifier: str, timeout: int | None = 3600):
         """
         Initialize client attributes only. Use `Client.create()` to construct
@@ -205,7 +210,7 @@ class Client:
     async def __aenter__(self):
         host, port = self._parse_address(self.addr)
         self.reader, self.writer = await asyncio.open_connection(host, port)
-        await self._write(__version__, self.thy_qualifier)
+        await self._write(Client.PROTOCOL_VERSION, self.thy_qualifier)
         (self.pid, self.client_id) = Client._parse_control_(await self._feed_and_unpack())
         Client.clients[self.client_id] = self
         return self
@@ -300,7 +305,7 @@ class Client:
             import_dir = os.path.abspath(import_dir)
         if base_dir is not None:
             base_dir = os.path.abspath(base_dir)
-        if timeout is None and import_dir is None and timeout is None and cmd_timeout is None and configs is None:
+        if timeout is None and cmd_timeout is None and import_dir is None and base_dir is None and configs is None:
             await self._write(source)
         else:
             await self._write("\x05eval", (source, timeout, cmd_timeout, import_dir, base_dir, configs))
@@ -324,6 +329,18 @@ class Client:
         Client._parse_control_(await self._feed_and_unpack())
 
     async def set_register_thy(self, value):
+        """
+        The recording switch of this connection: whether to record evaluated
+        theories into this connection's theory table. It only controls that
+        recording; it never registers anything into Isabelle's own theory
+        loader. Default: on.
+
+        With recording off, a later `theory B imports A` in the same connection
+        cannot see A in this connection's theory table, so Isabelle looks for
+        A.thy on disk: an error (No such file) if A only ever existed as source
+        sent over the socket, or a silent reload of the on-disk file if A's
+        source file exists.
+        """
         self._chk_live()
         if not isinstance(value, bool):
             raise ValueError("the argument value must be a string")
@@ -710,6 +727,24 @@ class Client:
         await self._write("\x05clean_cache")
         return Client._parse_control_(await self._feed_and_unpack())
 
+    async def clear_evaluated_theories(self, also_global: bool = False):
+        """
+        Clear this connection's theory table (the theories recorded by
+        evaluating `theory ... end` with the recording switch on, see
+        `set_register_thy`). Afterwards an import of such a theory falls
+        through to Isabelle's own theory loader, exactly as with recording off.
+        `rollback` never touches this table; this method is the only way to
+        shrink it short of closing the connection.
+
+        `also_global=True` additionally clears the table shared by all
+        connections of this server; it affects every connection.
+        """
+        self._chk_live()
+        if not isinstance(also_global, bool):
+            raise ValueError("the argument `also_global` must be a bool")
+        await self._write("\x05clear_evaluated_theories", also_global)
+        return Client._parse_control_(await self._feed_and_unpack())
+
     async def add_lib(self, libs: list[str]) -> None:
         """
         Add additional `libs` that will be loaded whenever evaluating a theory.
@@ -753,6 +788,10 @@ class Client:
         os.kill(self.pid, signal.SIGKILL)
 
     async def path_of_theory(self, theory_name, master_directory):
+        """
+        Return the absolute path of the theory's source file. Answers only for
+        theories whose source file exists on disk; raises REPLFail otherwise.
+        """
         self._chk_live()
         if not isinstance(theory_name, str):
             raise ValueError("the argument `theory_name` must be a string")

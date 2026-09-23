@@ -210,60 +210,19 @@ fun run_resource_supervison base_dir =
          | some => some)
   end
 
-(*
-fun spawn_worker conn =
-  let val (cin, cout) = make_streams conn
-      val (version, cin) = MessagePackBinIO.Unpack.doUnpack (MessagePackBinIO.Unpack.unpackString) cin
-   in case version
-   of "0.13.0" => ()
-    | "heartbeat" =>
-      then \<^try>\<open> (
-           output cout MessagePackBinIO.Pack.packUnit ()
-         ; BinIO.StreamIO.flushOut cout )
-        finally (
-           BinIO.StreamIO.closeOut cout
-         ; BinIO.StreamIO.closeIn  cin
-         ; raise CONTINUE ) \<close>
-      else if String.isPrefix "kill " version
-      then \<^try>\<open>
-       let val target = String.substring (version, 5, size version - 5)
-                     |> try Value.parse_nat
-                     |> the_default ~1
-           val dict = Synchronized.value clients
-           val found =
-                case Inttab.lookup dict target
-                  of SOME (T, _) => (
-                       Isabelle_Thread.interrupt_thread T
-                     ; true )
-                   | NONE   => false
-        in output cout MessagePackBinIO.Pack.packBool found
-         ; BinIO.StreamIO.flushOut cout
-       end
-        finally (
-           BinIO.StreamIO.closeOut cout
-         ; BinIO.StreamIO.closeIn  cin
-         ; raise CONTINUE )\<close>
-      else (
-        output_err cout "The server is connected with a wrong version of the client.\n\
-                 \Please run `pip install \"IsaREPL==0.12.2\" --force-reinstall` to update your client."
-      ; BinIO.StreamIO.flushOut cout
-      ; BinIO.StreamIO.closeOut cout
-      ; BinIO.StreamIO.closeIn  cin
-      ; raise CONTINUE)
-  end
-*)
+(* Wire protocol version.  The handshake below accepts exactly this string;
+   the Python client sends Client.PROTOCOL_VERSION. *)
+val protocol_version = "0.15.0"
 
 fun startup base_dir_of_theories0 thy0 addr0 =
   (* Absolutise the base dir HERE, once, where it enters the server -- the
      documented invocation is `./repl_server.sh <addr> HOL ./tmp`, i.e. relative.
-     Everything downstream resolves paths against the process-global cwd, and
-     load_group (REPL.ML) chdirs per master_dir group while loading, so a
-     relative base dir means the SAME path denotes different directories at
-     different moments.  Concretely that breaks: the is_dir/mkDir below, the
-     master_dir stored in each theory (Resources.begin_theory keeps the spelling
-     it is given), parse_text's `master_directory = base_dir` guard (which
-     compares Path.expand, and expand substitutes variables but never consults
-     the cwd), and any consumer keyed on the theory's master_dir.
+     A relative path is resolved against the working directory of the ML
+     process, and that directory is a throwaway one made by the launcher that
+     no client knows.  Resources.begin_theory keeps the spelling it is given,
+     so the master_dir stored in each theory, the is_dir/mkDir below,
+     parse_text's `master_directory = base_dir` guard and any consumer keyed on
+     a theory's master_dir all need the absolute form.
      Path.expand alone is not enough: it resolves ~ and $VAR, not `./tmp`. *)
   let val base_dir_of_theories = File.absolute_path base_dir_of_theories0
       val _ = if File.is_dir base_dir_of_theories
@@ -312,7 +271,7 @@ fun startup base_dir_of_theories0 thy0 addr0 =
       let val (conn,sender) = Socket.accept socket
           val (cin, cout) = make_streams conn
           val (version, cin) = MessagePackBinIO.Unpack.doUnpack (MessagePackBinIO.Unpack.unpackString) cin
-          val _ = if version = "0.14.1" then ()
+          val _ = if version = protocol_version then ()
                   else if version = "heartbeat"
                   then \<^try>\<open> (
                        output cout MessagePackBinIO.Pack.packUnit ()
@@ -341,8 +300,9 @@ fun startup base_dir_of_theories0 thy0 addr0 =
                      ; BinIO.StreamIO.closeIn  cin
                      ; raise CONTINUE )\<close>
                   else (
-                    output_err cout "The server is connected with a wrong version of the client.\n\
-                             \Please run `pip install \"IsaREPL==0.14.0\" --force-reinstall` to update your client."
+                    output_err cout ("The server is connected with a wrong version of the client.\n\
+                             \Please run `pip install \"IsaREPL==" ^ protocol_version ^
+                             "\" --force-reinstall` to update your client.")
                   ; BinIO.StreamIO.flushOut cout
                   ; BinIO.StreamIO.closeOut cout
                   ; BinIO.StreamIO.closeIn  cin
@@ -372,7 +332,7 @@ fun startup base_dir_of_theories0 thy0 addr0 =
                                    single_cmd_timeout = NONE,
                                    attributes = [],
                                    base_dir = Path.root,
-                                   write_thy = true }
+                                   write_thy = false }
           fun target_thy_file path attrs =
             let val session = REPL_Aux.parse_session_name path
              in { thy_qualifier =
@@ -384,8 +344,9 @@ fun startup base_dir_of_theories0 thy0 addr0 =
                   configs = #configs (!cfg),
                   (* absolutised for the same reason as in `startup`: the client
                      sends this path raw (the Python client abspaths it for `eval`
-                     but not for `file`), and a relative one is resolved against a
-                     cwd that load_group moves. *)
+                     but not for `file`), and a relative one would be resolved
+                     against the ML process's working directory, a throwaway
+                     directory of the launcher that no client knows. *)
                   import_dir = SOME (File.absolute_path (Path.dir path)),
                   single_cmd_timeout = #single_cmd_timeout (!cfg),
                   attributes = (case attrs of SOME a => a
@@ -414,6 +375,8 @@ fun startup base_dir_of_theories0 thy0 addr0 =
                  | "\005notrace" => (
                       REPL.set_trace false;
                       output cout packUnit () )
+                   (* the recording switch: whether theories evaluated on this
+                      connection are recorded into its theory table (REPL.ML) *)
                  | "\005register_thy" => (
                       REPL.set_register_thy true;
                       output cout packUnit () )
@@ -782,10 +745,19 @@ fun startup base_dir_of_theories0 thy0 addr0 =
                                     |> map fst
                         in output cout (packList packString) symbs
                        end
+                   (* clean_cache drops the two process-level evaluation caches
+                      written by \005file. *)
                   | "\005clean_cache" => let
                         in Synchronized.change evaluation_cache (fn _ => (
                               Synchronized.change evaluation_cache_store (K Symtab.empty)
                             ; Symtab.empty ))
+                         ; output cout packUnit ()
+                       end
+                   (* clear_evaluated_theories drops this connection's theory
+                      table; with `true` also the process-level global_theories. *)
+                  | "\005clear_evaluated_theories" => let
+                           val also_global = read unpackBool
+                        in REPL.clear_evaluated_theories also_global
                          ; output cout packUnit ()
                        end
                   | "\005diagnosis" => let
@@ -845,7 +817,7 @@ fun startup base_dir_of_theories0 thy0 addr0 =
                           single_cmd_timeout = #single_cmd_timeout (!cfg),
                           attributes = #attributes (!cfg),
                           base_dir = base_dir,
-                          write_thy = true }
+                          write_thy = false }
              in \<^try>\<open>
             let open MessagePackBinIO.Pack
              in Thread_Data.put sockets (SOME (cin, cout))

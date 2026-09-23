@@ -59,6 +59,8 @@ val lex_commands : cfg -> string -> (Position.T * string) list
 val fast_lex : string -> (Position.T * string) list
 
 val set_trace : bool -> unit
+    (*recording switch: whether theories evaluated on this connection are recorded
+      into the connection's theory table; it has nothing to do with Thy_Info*)
 val set_register_thy : bool -> unit
 val thy_loader : Path.T option -> string -> string list -> theory list
 
@@ -140,10 +142,9 @@ val parse_thy_header : cfg -> string -> Thy_Header.header
 
 (* Library Control *)
 
-    (*additional imports that will be injected into every evaluation target*)
-val evaluated_theories : theory Symtab.table Thread_Data.var
-val add_evaluated_theories : string * theory -> unit
-val add_global_theories : string * theory -> unit
+val add_evaluated_theory : theory -> unit
+val add_global_theory : theory -> unit
+val clear_evaluated_theories : bool -> unit
 
 (* Internal *)
 
@@ -285,6 +286,7 @@ val (origin_writeln, origin_tracing, origin_warning) =
 
 fun disable_output () = (
   Private_Output.writeln_fn := K () ;
+  Private_Output.writeln_urgent_fn := K () ;
   Private_Output.state_fn := K () ;
   Private_Output.information_fn := K () ;
   Private_Output.tracing_fn := K () ;
@@ -306,8 +308,8 @@ type state_history = (string * Toplevel.state) list
 
 type counter = int
 type trace = bool
-type register_theory = bool
-val state = Thread_Data.var () : (Toplevel.state * counter * (trace * register_theory) * state_history) Thread_Data.var
+type record_theory = bool
+val state = Thread_Data.var () : (Toplevel.state * counter * (trace * record_theory) * state_history) Thread_Data.var
 
 val Pure = Theory.get_pure ()
 val pure_keywords = Thy_Header.get_keywords Pure
@@ -319,91 +321,103 @@ exception REPL_fail of string
 
 fun is_theory_tok tok = Token.is_kind Token.Command tok andalso Token.content_of tok = "theory"
 
-val loader_locker = Synchronized.var "REPL theory loader locker" ()
+(* Thy_Info.use_theories must not run concurrently with itself in one
+   process: schedule_theories ends with Execution.reset () (thy_info.ML:284),
+   which wipes the process-global exec table (execution.ML:238-241);
+   load_thy registers with Execution.running and raises Fail on collision
+   (thy_info.ML:364-366); and load_thy edits the global theory graph via
+   remove_thy (:371).  Every REPL-worker thread reaches the loader. *)
+val pure_loader_lock = Synchronized.var "Isa-REPL Pure loader" ()
+
+fun use_theories_exclusively qualifier targets_of =
+  Synchronized.change pure_loader_lock (fn () =>
+    (case targets_of () of
+      [] => ()
+    | targets => ignore (Thy_Info.use_theories (Options.default ()) qualifier targets)))
 
 (*
 fun use_theories options qualifier imports =
   schedule_theories (#2 (require_thys options [] qualifier Path.current imports String_Graph.empty));
 *)
+fun evaluated_table () = the_default Symtab.empty (Thread_Data.get evaluated_theories)
+
+fun lookup_theory name =
+  get_first (fn look => look name)
+    [Symtab.lookup (evaluated_table ()),
+     Symtab.lookup (Synchronized.value global_theories),
+     Thy_Info.lookup_theory]
+
 fun thy_loader import_dir thy_qualifier targets_str =
-  let val evaluated_theories = the_default Symtab.empty (Thread_Data.get evaluated_theories)
-      fun is_loaded import =
-          Symtab.defined evaluated_theories import orelse
-          is_some (Thy_Info.lookup_theory import) orelse
-          Symtab.defined (Synchronized.value global_theories) import
+  let val is_loaded = is_some o lookup_theory
       val targets = map (Resources.import_name thy_qualifier (the_default Path.root import_dir))
                         targets_str
       fun load' import =
-        case Symtab.lookup evaluated_theories import
-          of SOME thy => thy
-           | NONE     => (
-        case Thy_Info.lookup_theory import
-          of SOME thy => thy
-           | NONE     =>
-        case Symtab.lookup (Synchronized.value global_theories) import
-          of SOME thy => thy
-           | NONE =>
-         raise REPL_fail ("Bad theory import " ^ import)
-        )
-   in if forall (is_loaded o #theory_name) targets
-      then map (load' o #theory_name) targets
-      else let
-   (*val cwd = Synchronized.change_result loader_locker (fn () =>
-                    (OS.FileSys.getDir (), ())) *)
-      val can_load = Execution.is_running Document_ID.none
+        (case lookup_theory import of
+          SOME thy => thy
+        | NONE => raise REPL_fail ("Bad theory import " ^ import))
 
       (*TODO: queue things to load and then process them together*)
-      val _ = Synchronized.change loader_locker (fn () =>
-        let val cwd = OS.FileSys.getDir ()
-            val targets = filter_out (is_loaded o #theory_name) targets
-            val _ = if not can_load andalso not (null targets)
-                    then raise REPL_fail (
-                              "Fail to load " ^ space_implode ", " (map #theory_name targets))
-                    else ()
 
-(*            fun load_group works =
-                if null targets
-                then ()
-                else (Thy_Info.use_theories (Options.default ()) thy_qualifier
-                                            (map ( rpair Position.none
-                                                 o Path.implode
-                                                 o fst
-                                                 o Path.split_ext
-                                                 o #node_name) works) ; ()) *)
+      (* The string handed to Thy_Info.use_theories is resolved a second time inside
+         Pure, against Path.current (thy_info.ML:463).  A theory that
+         Resources.find_theory_file can locate resolves there by itself; a
+         branch-4 record (absolute node_name, no session file) must be handed
+         its absolute path, or Pure looks for <cwd>/<Base>.thy; branch-1/3
+         records have no absolute path to hand, and for them that fallback is
+         the accepted residue (plan §6.3).
+         The second conjunct is load-bearing, not belt-and-braces: from a bare
+         path Pure recomputes the name as `theory_name qualifier (basename)`, which
+         equals #theory_name only when the import did NOT come from the session
+         structure.  For a session theory (find_theory_file = SOME) the name carries
+         a session qualifier the basename lacks, so passing the path would register
+         it under the wrong name and load' below would miss it.  The first
+         conjunct is not decorative either: a branch-3 record (qualified short
+         name, find_theory_file = NONE) has node_name = Path.basic theory_name,
+         and split_ext on that relative name would turn HOL-Library.Multiset
+         into HOL-Library. *)
+      fun loader_arg {node_name, theory_name, ...} =
+        if Path.is_absolute node_name andalso
+           not (is_some (Resources.find_theory_file theory_name))
+        then Path.implode (#1 (Path.split_ext node_name))
+        else theory_name
 
-            val target_groups = partition_eq (op = o apply2 #master_dir) targets
-            fun load_group works = (
-                OS.FileSys.chDir (Path.implode (#master_dir (hd works)))
-              ; if null targets
-                then ()
-                else (Thy_Info.use_theories (Options.default ()) thy_qualifier
-                                            (map (rpair Position.none o #theory_name) works) ; ()))
-         (* fun seg_load L =
-              if null L
-              then ()
-              else let val (this, next) = chop 16 L
-                    in Thy_Info.use_theories (Options.default ()) thy_qualifier
-                                        (map (rpair Position.none) this)
-                     ; seg_load next
-                   end *)
-         in \<^try>\<open> List.app load_group target_groups
-            finally
-              OS.FileSys.chDir cwd \<close>
-            (* seg_load targets *)
-        end)
-
+      val _ =
+        if forall (is_loaded o #theory_name) targets then ()
+        else
+          use_theories_exclusively thy_qualifier (fn () =>
+            targets
+            |> filter_out (is_loaded o #theory_name)
+            |> map (rpair Position.none o loader_arg))
    in map (load' o #theory_name) targets
   end
-  end
 
-fun add_evaluated_theories entry =
-  let val store  = the_default Symtab.empty (Thread_Data.get evaluated_theories)
-      val store' = Symtab.update entry store
-   in Thread_Data.put evaluated_theories (SOME store')
-  end
+(* Recording a theory under its long name.  Before writing, drop every
+   entry that is, or has among its ancestors, a theory of the same base
+   name that is not this one: Context.begin_thy rejects two such theories
+   in one ancestry with THEORY ("Duplicate theory name", ...) --
+   eq_thy_consistent compares base names, not long names -- far from the
+   cause. *)
+fun insert_theory thy tab =
+  let
+    val key = Context.theory_name {long = true} thy
+    val base = Context.theory_name {long = false} thy
+    fun shadowed thy' =
+      exists (fn a => Context.theory_name {long = false} a = base andalso not (Context.eq_thy (a, thy)))
+        (thy' :: Context.ancestors_of thy')
+    val stale = Symtab.fold (fn (k, thy') => shadowed thy' ? cons k) tab []
+  in Symtab.update (key, thy) (fold Symtab.delete_safe stale tab) end
 
-fun add_global_theories entry =
-  Synchronized.change global_theories (Symtab.update entry)
+fun recorded_table thy = insert_theory thy (evaluated_table ())
+
+fun add_evaluated_theory thy = Thread_Data.put evaluated_theories (SOME (recorded_table thy))
+
+fun add_global_theory thy = Synchronized.change global_theories (insert_theory thy)
+
+fun with_recorded_theory thy f = Thread_Data.setmp evaluated_theories (SOME (recorded_table thy)) f ()
+
+fun clear_evaluated_theories also_global =
+  (Thread_Data.put evaluated_theories (SOME Symtab.empty);
+   if also_global then Synchronized.change global_theories (K Symtab.empty) else ())
 
 val eq_symb = Token.make ((1,0), "=") Position.none |> fst
 fun mk_idt s = Token.make ((2,0),s) Position.none |> fst
@@ -416,7 +430,6 @@ fun init_thy ignore_imports {thy_qualifier, base_dir, additional_libs, configs, 
    else let
       val header_toks = List.drop (toks, i)
       val header = Thy_Header.read_tokens (Token.pos_of (hd header_toks)) header_toks
-      val sname = #name header
 
       fun qualify_name {name,imports,keywords} =
             {name=apfst (Long_Name.qualify thy_qualifier) name, imports=imports, keywords=keywords}
@@ -429,10 +442,6 @@ fun init_thy ignore_imports {thy_qualifier, base_dir, additional_libs, configs, 
          the target's own syntax/notation wins on any conflict. *)
       val imports = map (rpair Position.none) additional_libs
                   @ #imports header
-      val evaluated_theories = the_default Symtab.empty (Thread_Data.get evaluated_theories)
-      val _ = if Symtab.defined evaluated_theories (#1 sname)
-              then raise REPL_fail ("Theory " ^ #1 sname ^ " has been defined.")
-              else ()
 
       val parents =
             if ignore_imports then []
@@ -517,8 +526,8 @@ fun lex_split drop_first drop_if_no_meet kws ATTACH P source =
 
 val split_thy_headers = lex_split false false pure_keywords Token.is_command_modifier is_theory_tok
 
-fun parse_text (cfg:cfg) register_theory' state source =
-  let val write_thy = register_theory' andalso #write_thy cfg
+fun parse_text (cfg:cfg) state source =
+  let val write_thy = #write_thy cfg
       val thy = get_thy write_thy cfg state source
    in if write_thy andalso not (pointer_eq (Pure, thy))
          andalso Path.expand (Resources.master_directory thy) = Path.expand (#base_dir cfg)
@@ -605,7 +614,7 @@ fun print_toks [] = []
 fun RE (cfg:cfg) source : command_outputs =
   case Thread_Data.get state
     of NONE                  => {outputs=NONE, error=SOME "INTERNAL ERROR: state lost"}
-     | SOME (s0,cnt,(trace, register_theory'),H) =>
+     | SOME (s0,cnt,(trace, record_theory'),H) =>
   case Thread_Data.get Session_ID
     of NONE                => {outputs=NONE, error=SOME "INTERNAL ERROR: worker ID lost"}
      | SOME (wid, plugins) =>
@@ -648,7 +657,7 @@ fun RE (cfg:cfg) source : command_outputs =
 
       fun loop ret _ [] [] s = (mk_command_outputs ret NONE, s)
         | loop ret errs [] (src::srcs) s =
-            loop ret errs (parse_text cfg register_theory' s src) srcs s
+            loop ret errs (parse_text cfg s src) srcs s
         | loop ret errs ((tr,current_cmd)::trs) srcs s =
             let val (tr,current_cmd) =
                   if Toplevel.is_malformed tr
@@ -676,20 +685,8 @@ fun RE (cfg:cfg) source : command_outputs =
                   end
                | (err, SOME s'0) =>
                 let val (plugin_output, s') = run_plugins cfg plugins (current_cmd, trs, s'0)
-                    val _ = if Toplevel.is_end_theory s'
-                            then if register_theory'
-                              then let
-                                val thys = the_default Symtab.empty (Thread_Data.get evaluated_theories)
-                                val thy  = Toplevel.end_theory pos s'
-                                val thys'= Symtab.update_new (Context.theory_name {long=true} thy, thy) thys
-                                in Thread_Data.put evaluated_theories (SOME thys')
-                                 ; (Thy_Info.register_thy thy
-                                    handle err as Exn.ERROR msg => (
-                                      if String.isPrefix "Cannot update finished theory" msg
-                                      then ()
-                                      else Exn.reraise err ))
-                               end
-                              else ()
+                    val _ = if Toplevel.is_end_theory s' andalso record_theory'
+                            then add_evaluated_theory (Toplevel.end_theory pos s')
                             else ()
                  in loop (if trace then (catch_state plugin_output err current_cmd s')::ret else [])
                          (trim_err err @ errs)
@@ -699,7 +696,7 @@ fun RE (cfg:cfg) source : command_outputs =
 
       val (ret, s') = loop [] [] [] srcs s0
 
-   in Thread_Data.put state (SOME (s', cnt+1, (trace, register_theory'), H))
+   in Thread_Data.put state (SOME (s', cnt+1, (trace, record_theory'), H))
     ; ret
   end
   handle REPL_fail E => {outputs = NONE, error=SOME E}
@@ -771,12 +768,10 @@ fun lex_commands cfg source =
             val kws = Thy_Header.get_keywords thy
             val ret = lex_split true true kws Token.is_command_modifier (Token.is_kind Token.Command) src
 
-            val thys = the_default Symtab.empty (Thread_Data.get evaluated_theories)
-            val thys'= Symtab.update_new (Context.theory_name {long=true} thy, thy) thys
             fun pos_of [] = Position.none
               | pos_of (h :: _) = snd h
          in map (fn syms => (pos_of syms, Symbol_Pos.implode syms)) ret
-         :: Thread_Data.setmp evaluated_theories (SOME thys') parse srcs
+         :: with_recorded_theory thy (fn () => parse srcs)
         end
    in Symbol_Pos.explode (source, pos)
    |> split_thy_headers
@@ -1065,26 +1060,24 @@ fun get_ctxt () =
 
 val dot_path = Path.explode "."
 
-fun path_of_the_theory (cfg:cfg) name =
-  let val dir = the_default Path.root (#import_dir cfg)
-      val {master_dir, theory_name, ...} = Resources.import_name (#thy_qualifier cfg) dir name
-      val evaluated_theories = the_default Symtab.empty (Thread_Data.get evaluated_theories)
-      fun path_of thy =
-        Path.append (Resources.master_directory thy)
-                    (Path.basic (Context.theory_name {long=false} thy ^ ".thy"))
-   in case Symtab.lookup evaluated_theories theory_name
-        of SOME thy => path_of thy
-         | NONE     => (
-      case Thy_Info.lookup_theory name
-        of SOME thy => path_of thy
-         | NONE     =>
-      case Symtab.lookup (Synchronized.value global_theories) name
-        of SOME thy => path_of thy
-         | NONE =>
-      if master_dir = dot_path
-      then raise REPL_fail ("Fail to infer the path of the theory " ^ name)
-      else Path.append master_dir (Path.basic (Long_Name.base_name theory_name ^ ".thy")) 
-      )
+fun path_of_the_theory (cfg : cfg) name =
+  let
+    val dir = the_default Path.root (#import_dir cfg)
+    val {master_dir, theory_name, ...} = Resources.import_name (#thy_qualifier cfg) dir name
+    fun path_of thy =
+      Path.append (Resources.master_directory thy)
+                  (Path.basic (Context.theory_name {long = false} thy ^ ".thy"))
+    val candidate =
+      (case lookup_theory theory_name of
+        SOME thy => path_of thy
+      | NONE =>
+          if master_dir = dot_path
+          then raise REPL_fail ("Fail to infer the path of the theory " ^ name)
+          else Path.append master_dir (Path.basic (Long_Name.base_name theory_name ^ ".thy")))
+  in
+    if File.is_file candidate then candidate
+    else raise REPL_fail ("Fail to infer the path of the theory " ^ name ^
+                          " (no such file: " ^ Path.implode candidate ^ ")")
   end
 
 fun parse_thy_header (cfg:cfg) text =
