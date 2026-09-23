@@ -1,0 +1,12 @@
+# lib/isa_repl.jar is committed; no_build keeps every `isabelle` invocation from
+# rebuilding it on the user's machine.  To rebuild after a change to
+# src/scala/, run tools/build_jar.sh <this component directory>.
+title = Isabelle/Scala/Isa_REPL
+module = lib/isa_repl.jar
+no_build = true
+requirements = \
+  env:ISABELLE_SCALA_JAR
+sources = \
+  src/scala/repl_tool.scala
+services = \
+  isabelle.isa_repl.Tools

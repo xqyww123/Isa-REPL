@@ -848,3 +848,40 @@ fun kill_server address =
 
 
 end
+
+(* The `isabelle REPL` tool starts the server through this command.  startup
+   binds, listens, prints the banner and forks the accept thread, then
+   returns that thread (Server.ML:290-314), so the handler does not block
+   the protocol loop.  Two guards make the tool's send order a property of
+   the code: Isa_REPL.Isa_REPL must be present in Thy_Info's graph (on a
+   fresh load it enters only after every theory future joined; on a heap
+   that already holds it the guard passes trivially), and startup runs at
+   most once per process.  A second fork supervises the accept thread: today
+   repl_server.sh:102 joins it and the build dies with it; here its end is
+   reported so the tool exits non-zero.  The failure render is guarded as
+   in repl_boot.ML; the four lines are repeated because that file is a raw
+   prelude and this one must also compile without it: an ordinary
+   isabelle build of a session holding Isa_REPL runs with no prelude at
+   all (build_job.scala:255). *)
+val isa_repl_started = Synchronized.var "Isa_REPL.startup" false;
+fun isa_repl_startup [addr, dir, mute] =
+      (case Exn.capture_body (fn () =>
+              (if is_none (Thy_Info.lookup_theory "Isa_REPL.Isa_REPL")
+               then error "Isa_REPL.startup before Isa_REPL.load finished" else ();
+               Synchronized.change isa_repl_started
+                 (fn true => error "Isa_REPL.startup called twice" | false => true);
+               if Value.parse_bool mute then REPL.disable_output () else ();
+               REPL_Server.startup (Path.explode dir) NONE addr)) of
+        Exn.Res thread =>
+          (Output.protocol_message [Markup.function "Isa_REPL.ready"] [];
+           ignore (Isabelle_Thread.fork (Isabelle_Thread.params "Isa_REPL.supervisor") (fn () =>
+             (Isabelle_Thread.join thread;
+              Output.protocol_message [Markup.function "Isa_REPL.stopped"] []))))
+      | Exn.Exn exn =>
+          Output.protocol_message [Markup.function "Isa_REPL.failed"]
+            [[XML.Text (cat_lines
+                (case Exn.capture Runtime.exn_message_list exn of
+                  Exn.Res msgs => msgs
+                | Exn.Exn _ (*sic!*) => ["CRASHED"]))]])
+  | isa_repl_startup _ = raise Match;
+val _ = Protocol_Command.define "Isa_REPL.startup" isa_repl_startup;
