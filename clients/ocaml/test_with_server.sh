@@ -1,7 +1,8 @@
 #!/bin/bash
 set -e
 
-SERVER_ADDR="127.0.0.1:6666"
+SERVER_ADDR="127.0.0.1:6698"   # a free port, NOT the production 6666
+SERVER_PORT="6698"
 SERVER_LOG="/tmp/repl_server.log"
 
 echo "=========================================="
@@ -13,33 +14,27 @@ echo
 echo "Starting Isabelle REPL server..."
 cd /home/qiyuan/Current/MLML
 source ./envir.sh
-./contrib/Isa-REPL/repl_server.sh $SERVER_ADDR ITP4SMT /tmp/repl_outputs -o threads=14 -o document=false > $SERVER_LOG 2>&1 &
-SERVER_PID=$!
-echo "Server PID: $SERVER_PID"
-echo "Server log: $SERVER_LOG"
+isabelle REPL -l HOL -o threads=14 -o document=false $SERVER_ADDR /tmp/repl_outputs > $SERVER_LOG 2>&1 &
+echo "Server launcher started; log: $SERVER_LOG"
 
-# Function to cleanup
+# Function to cleanup: the launcher's PID is a bash layer, not the JVM, so kill
+# by port instead (Client.kill would need the 0.15.0 client on both ends).
 cleanup() {
     echo
-    echo "Cleaning up..."
-    if kill -0 $SERVER_PID 2>/dev/null; then
-        echo "Stopping server (PID: $SERVER_PID)..."
-        kill $SERVER_PID 2>/dev/null || true
-        sleep 2
-        kill -9 $SERVER_PID 2>/dev/null || true
-    fi
+    echo "Cleaning up (killing whatever listens on $SERVER_PORT)..."
+    fuser -n tcp -k "$SERVER_PORT" 2>/dev/null || true
+    sleep 2
     echo "Done."
 }
 trap cleanup EXIT
 
-# Wait for server to be ready
-echo "Waiting 30 seconds for server to initialize..."
-for i in {1..30}; do
-    echo -n "."
+# Wait for the server to be ready: poll the port (the ready line is also in $SERVER_LOG)
+echo "Waiting for the server to listen on $SERVER_PORT (heap load can take ~90s)..."
+for i in $(seq 1 180); do
+    if ss -ltn 2>/dev/null | grep -q ":$SERVER_PORT "; then echo "Server is listening."; break; fi
+    if grep -q 'server ready at' "$SERVER_LOG" 2>/dev/null; then echo "Server ready."; break; fi
     sleep 1
 done
-echo
-echo "Server should be ready now."
 echo
 
 # Go back to ocaml client directory

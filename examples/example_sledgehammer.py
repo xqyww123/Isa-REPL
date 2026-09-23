@@ -14,8 +14,8 @@ language. This example demonstartes how to use this handy tool.
 
 To run this example, you must have installed [Auto_Sledgehammer](https://github.com/xqyww123/auto_sledgehammer).
 
-Note: To fully wield the concurrency power of Isabelle, please pass options "-j<N> -o threads=<N>" to "./repl_server", replacing <N> to the number of CPU cores you want to use,
-e.g, "./repl_server.sh 127.0.0.1:6666 Main /tmp/repl_outputs -j 32 -o threads=32"
+Note: To fully wield the concurrency power of Isabelle, please pass option "-o threads=<N>" to "isabelle REPL", replacing <N> with the number of CPU cores you want to use,
+e.g, "isabelle REPL -l Main -o threads=32 127.0.0.1:6666 /tmp/repl_outputs"
 
 This <N> only affects the cores for Sledgehammer. The evaluation of each theory file still uses its own thread, and the number of such threads is unlimited.
 

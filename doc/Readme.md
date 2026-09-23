@@ -18,8 +18,7 @@ Unofficial support for Isabelle's Read-Eval-Print-Loop.
 
 ## Installation
 
-We **only** support [Isabelle2024](https://isabelle.in.tum.de/website-Isabelle2024/index.html).
-Since Isabelle2025 is going to release, the support for Isabelle2023 will not be updated any more.
+We support [Isabelle2025-2](https://isabelle.in.tum.de/).
 
 Ensuring `<ISABELLE-BASE-DIRECTORY>/bin` is in your `$PATH` environment
 ```
@@ -29,16 +28,28 @@ git checkout $(isabelle version) # Error can raise if you are using an unsupport
 isabelle components -u .
 pip install IsaREPL
 ```
+`isabelle components -u .` registers Isa-REPL as an Isabelle component on this
+machine (run it once per machine, with an absolute path); the `isabelle REPL`
+tool below is only available once it is registered.
 ## Start up the REPL server
 
 ```
-# merely an example:
-./repl_server.sh 127.0.0.1:6666 HOL ./tmp -o threads=16
+# merely an example (options come first, then ADDR and OUTPUT_DIR;
+# give OUTPUT_DIR as an absolute path):
+isabelle REPL -l HOL -o threads=16 127.0.0.1:6666 /tmp/isa_repl_out
 # Note, you must explicitly indicate the number of cpu cores that you want to use,
-# otherwise, Isabelle only takes 8 core by default
+# otherwise, Isabelle only takes 8 core by default.
 ```
 
-Run `./repl_server.sh` to see the full explanation of the arguments and options.
+`isabelle REPL` replaces the old `./repl_server.sh`, which is now a thin wrapper
+for it (kept one version, then removed).  The watchdog takes the same command
+line as the tool, options FIRST:
+
+```
+./repl_server_watch_dog.sh -l HOL -o threads=16 127.0.0.1:6666 /tmp/isa_repl_out
+```
+
+Run `isabelle REPL -?` to see the full explanation of the arguments and options.
 
 ## Example Clients
 

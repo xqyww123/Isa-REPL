@@ -210,7 +210,7 @@ opam exec -- dune install
 # 启动服务器（在另一个终端）
 cd /home/qiyuan/Current/MLML
 source ./envir.sh
-./contrib/Isa-REPL/repl_server.sh 127.0.0.1:6666 ITP4SMT /tmp/repl_outputs -o threads=14 -o document=false
+isabelle REPL -l HOL -o threads=14 -o document=false 127.0.0.1:6698 /tmp/repl_outputs
 
 # 运行测试（等待30秒后）
 cd clients/ocaml
