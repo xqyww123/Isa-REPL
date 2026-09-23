@@ -41,9 +41,8 @@ isabelle REPL -l HOL -o threads=16 127.0.0.1:6666 /tmp/isa_repl_out
 # otherwise, Isabelle only takes 8 core by default.
 ```
 
-`isabelle REPL` replaces the old `./repl_server.sh`, which is now a thin wrapper
-for it (kept one version, then removed).  The watchdog takes the same command
-line as the tool, options FIRST:
+`isabelle REPL` replaces the old `./repl_server.sh` (removed).  The watchdog takes
+the same command line as the tool, options FIRST:
 
 ```
 ./repl_server_watch_dog.sh -l HOL -o threads=16 127.0.0.1:6666 /tmp/isa_repl_out

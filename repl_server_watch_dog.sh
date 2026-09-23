@@ -24,7 +24,6 @@ addr="${@: -2:1}"
 if [[ "$addr" == -* || "$addr" != *:* ]]; then
   echo "Usage: repl_server_watch_dog.sh [OPTIONS] ADDR OUTPUT_DIR" >&2
   echo "  ADDR (host:port) must be the second-to-last argument; put every option FIRST." >&2
-  echo "  (repl_server.sh keeps the old order: ADDR SESSION DIR [OPTIONS].)" >&2
   exit 2
 fi
 port="${addr##*:}"

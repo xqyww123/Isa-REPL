@@ -305,10 +305,11 @@ class Client:
             import_dir = os.path.abspath(import_dir)
         if base_dir is not None:
             base_dir = os.path.abspath(base_dir)
-        if timeout is None and cmd_timeout is None and import_dir is None and base_dir is None and configs is None:
+        opts = (timeout, cmd_timeout, import_dir, base_dir, configs)
+        if all(o is None for o in opts):
             await self._write(source)
         else:
-            await self._write("\x05eval", (source, timeout, cmd_timeout, import_dir, base_dir, configs))
+            await self._write("\x05eval", (source, *opts))
         ret = Client._parse_control_(await self._feed_and_unpack())
         if ret is None:
             return None

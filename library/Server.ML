@@ -215,8 +215,9 @@ fun run_resource_supervison base_dir =
 val protocol_version = "0.15.0"
 
 fun startup base_dir_of_theories0 thy0 addr0 =
-  (* Absolutise the base dir HERE, once, where it enters the server -- the
-     documented invocation is `./repl_server.sh <addr> HOL ./tmp`, i.e. relative.
+  (* Absolutise the base dir HERE, once, where it enters the server.  The
+     isabelle REPL tool now absolutises OUTPUT_DIR before sending it, but a
+     direct ML caller may still pass a relative base dir.
      A relative path is resolved against the working directory of the ML
      process, and that directory is a throwaway one made by the launcher that
      no client knows.  Resources.begin_theory keeps the spelling it is given,
@@ -856,8 +857,8 @@ end
    the code: Isa_REPL.Isa_REPL must be present in Thy_Info's graph (on a
    fresh load it enters only after every theory future joined; on a heap
    that already holds it the guard passes trivially), and startup runs at
-   most once per process.  A second fork supervises the accept thread: today
-   repl_server.sh:102 joins it and the build dies with it; here its end is
+   most once per process.  A second fork supervises the accept thread: the
+   old repl_server.sh joined it and the build died with it; here its end is
    reported so the tool exits non-zero.  The failure render is guarded as
    in repl_boot.ML; the four lines are repeated because that file is a raw
    prelude and this one must also compile without it: an ordinary

@@ -83,11 +83,14 @@ Usage: isabelle REPL [OPTIONS] ADDR OUTPUT_DIR
             case _ => getopts.usage()
           }
         val qualifier_value = qualifier getOrElse logic
+        // absolutise OUTPUT_DIR here, against the JVM's (the user's shell) cwd; the ML
+        // process's cwd is a throwaway tmp dir, so a relative one must not reach it
+        val output_dir_abs = Path.explode(output_dir).absolute.implode
 
-        // the launch line, before building options (repl_server.sh:80-83 prints
-        // one too, so a run is identifiable in the log before any build)
+        // the launch line, before building options, so a run is identifiable in the
+        // log before any build
         Output.writeln(
-          "Isa-REPL on " + quote(logic) + " at " + addr + ", output in " + quote(output_dir),
+          "Isa-REPL on " + quote(logic) + " at " + addr + ", output in " + quote(output_dir_abs),
           stdout = true)
 
         val dirs_list = dirs.toList
@@ -222,7 +225,7 @@ Usage: isabelle REPL [OPTIONS] ADDR OUTPUT_DIR
 
         // 9. start the server
         session.protocol_command("Isa_REPL.startup",
-          XML.string(addr), XML.string(output_dir), XML.string(if (mute) "true" else "false"))
+          XML.string(addr), XML.string(output_dir_abs), XML.string(if (mute) "true" else "false"))
         wait_for(ready, "startup") match {
           case Ready(_) =>
           case other => bail(other)

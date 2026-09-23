@@ -284,6 +284,9 @@ val (origin_writeln, origin_tracing, origin_warning) =
     (!Private_Output.writeln_fn, !Private_Output.tracing_fn, !Private_Output.warning_fn)
 (* val _ = init_printers () *)
 
+(* Blanks 11 of the 13 Private_Output refs; system_message_fn (the startup-failure
+   diagnostic channel) and protocol_message_fn (protocol traffic the Scala peer must
+   answer) stay live by design.  Recount 11 + 2 = 13 on a distribution bump. *)
 fun disable_output () = (
   Private_Output.writeln_fn := K () ;
   Private_Output.writeln_urgent_fn := K () ;
@@ -526,6 +529,9 @@ fun lex_split drop_first drop_if_no_meet kws ATTACH P source =
 
 val split_thy_headers = lex_split false false pure_keywords Token.is_command_modifier is_theory_tok
 
+(* write_thy is false in every cfg since D10 (nothing sets it true), so the
+   File.append below and get_thy's File.rm are unreachable; the disk write-back
+   mechanism is kept but dead, see THEORY_LOADER_LAYERING_PLAN §7.5. *)
 fun parse_text (cfg:cfg) state source =
   let val write_thy = #write_thy cfg
       val thy = get_thy write_thy cfg state source
