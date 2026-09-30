@@ -136,8 +136,10 @@ class Client:
 
     def __init__(self, addr: str, thy_qualifier: str, timeout: int | None = 3600):
         """
-        Initialize client attributes only. Use `Client.create()` to construct
-        a connected client instance.
+        Initialize client attributes only; `async with Client(...) as c:` connects.
+
+        timeout: seconds to wait for the connection and for each reply from
+        the server; None waits forever.
         """
         if not isinstance(thy_qualifier, str):
             raise ValueError("the argument thy_qualifier must be a string")
@@ -156,17 +158,29 @@ class Client:
         host, port = address.split(':')
         return (host, int(port))
 
-    async def _feed_and_unpack(self) -> Any:
-        """Read bytes from StreamReader, feed to Unpacker, return next msgpack object."""
-        assert self.reader is not None, "Client not connected — use 'async with' or call __aenter__ first"
+    @staticmethod
+    async def _read_object(reader, unpack, timeout):
+        """Read one msgpack object; each chunk must arrive within `timeout` seconds."""
         while True:
             try:
-                return self.unpack.unpack()
+                return unpack.unpack()
             except mp.OutOfData:
-                data = await self.reader.read(65536)
+                try:
+                    data = await asyncio.wait_for(reader.read(65536), timeout)
+                except TimeoutError:
+                    raise TimeoutError("timed out") from None  # the socket-era text; evaluation/failure_analysis.py matches it
                 if not data:
                     raise ConnectionResetError("peer closed connection")
-                self.unpack.feed(data)
+                unpack.feed(data)
+
+    async def _feed_and_unpack(self) -> Any:
+        """Read the next msgpack object; a read that does not finish closes the client, as the stream is then out of step."""
+        assert self.reader is not None, "Client not connected — use 'async with' or call __aenter__ first"
+        try:
+            return await Client._read_object(self.reader, self.unpack, self.timeout)
+        except BaseException:
+            self.close()
+            raise
 
     async def _write(self, *args):
         """Pack and send one or more msgpack values, then drain."""
@@ -185,31 +199,27 @@ class Client:
             raise REPLFail(f"Client {self.client_id} is dead or closed")
 
     @classmethod
-    async def test_server(cls, addr, timeout=60):
-        host, port = addr.split(':')
-        reader, writer = await asyncio.open_connection(host, port)
+    async def _request_once(cls, addr, message, timeout):
+        """Send one message on a fresh connection and return its reply."""
+        host, port = cls._parse_address(addr)
+        reader, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout)
         try:
             unpack = mp.Unpacker(unicode_errors='replace')
-            writer.write(mp.packb("heartbeat"))  # type: ignore[arg-type]
+            writer.write(mp.packb(message))  # type: ignore[arg-type]
             await writer.drain()
-            while True:
-                try:
-                    result = unpack.unpack()
-                    break
-                except mp.OutOfData:
-                    data = await reader.read(65536)
-                    if not data:
-                        raise ConnectionResetError("peer closed connection")
-                    unpack.feed(data)
-            Client._parse_control_(result)
+            return cls._parse_control_(await cls._read_object(reader, unpack, timeout))
         finally:
             writer.close()
             await writer.wait_closed()
 
+    @classmethod
+    async def test_server(cls, addr, timeout=60):
+        await cls._request_once(addr, "heartbeat", timeout)
+
 
     async def __aenter__(self):
         host, port = self._parse_address(self.addr)
-        self.reader, self.writer = await asyncio.open_connection(host, port)
+        self.reader, self.writer = await asyncio.wait_for(asyncio.open_connection(host, port), self.timeout)
         await self._write(Client.PROTOCOL_VERSION, self.thy_qualifier)
         (self.pid, self.client_id) = Client._parse_control_(await self._feed_and_unpack())
         Client.clients[self.client_id] = self
@@ -219,25 +229,7 @@ class Client:
 
     @classmethod
     async def kill_client(cls, addr, client_id, timeout=60) -> bool:
-        host, port = addr.split(':')
-        reader, writer = await asyncio.open_connection(host, port)
-        try:
-            unpack = mp.Unpacker(unicode_errors='replace')
-            writer.write(mp.packb("kill " + str(client_id)))  # type: ignore[arg-type]
-            await writer.drain()
-            while True:
-                try:
-                    result = unpack.unpack()
-                    break
-                except mp.OutOfData:
-                    data = await reader.read(65536)
-                    if not data:
-                        raise ConnectionResetError("peer closed connection")
-                    unpack.feed(data)
-            return Client._parse_control_(result)
-        finally:
-            writer.close()
-            await writer.wait_closed()
+        return await cls._request_once(addr, "kill " + str(client_id), timeout)
 
 
     def close(self):
