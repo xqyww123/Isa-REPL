@@ -246,7 +246,8 @@ fun collect_theory sname0 thy_name (tinfo, thys) =
          of NONE => error "BUG Resources.find_theory_file"
           | SOME path =>
               let val sname' = Resources.theory_qualifier thy_name
-                  val {imports,keywords,...} = Resources.check_thy (Path.dir path) thy_name
+                  val {imports,keywords,...} =
+                        Thy_Header.read (Position.file (File.symbolic_path path)) (File.read path)
                   val dir = Path.dir path
                   val imports = map_filter (parse_import dir sname' o fst) imports
                   val recursive_targets = imports

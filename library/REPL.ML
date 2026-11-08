@@ -60,7 +60,7 @@ val fast_lex : string -> (Position.T * string) list
 
 val set_trace : bool -> unit
     (*recording switch: whether theories evaluated on this connection are recorded
-      into the connection's theory table; it has nothing to do with Thy_Info*)
+      into the connection's theory table; it has nothing to do with loaded theories*)
 val set_register_thy : bool -> unit
 val thy_loader : Path.T option -> string -> string list -> theory list
 
@@ -93,23 +93,23 @@ val list_states' : cfg -> unit -> (string (*name*) * command_output) list
 
 (* Parse *)
 
-val parse_term    : string -> Proof.context * term
-val retrieve_fact : string -> Proof.context * thm list
+val parse_term    : Toplevel.state -> string -> Proof.context * term
+val retrieve_fact : Toplevel.state -> string -> Proof.context * thm list
 
 (* Tools *)
 
 val trim_makrup  : string -> string
 
 
-val sledgehammer : int (*timeout in seconds*) -> string
+val sledgehammer : Toplevel.state -> int (*timeout in seconds*) -> string
 
-val premise_selection_each_goal : Sledgehammer_Prover.params ->
+val premise_selection_each_goal : Toplevel.state -> Sledgehammer_Prover.params ->
       Sledgehammer_Fact.fact_override ->
         int -> (string * Sledgehammer_Fact.fact list) list list
-val premise_selection_ultimate_goal : Sledgehammer_Prover.params ->
+val premise_selection_ultimate_goal : Toplevel.state -> Sledgehammer_Prover.params ->
       Sledgehammer_Fact.fact_override ->
         int -> (string * Sledgehammer_Fact.fact list) list
-val premise_selection_leading_goal : Sledgehammer_Prover.params ->
+val premise_selection_leading_goal : Toplevel.state -> Sledgehammer_Prover.params ->
       Sledgehammer_Fact.fact_override ->
         int -> (string * Sledgehammer_Fact.fact list) list
 
@@ -124,8 +124,10 @@ type context = {
 }
 
 val get_toplevel_state : unit -> Toplevel.state
-val get_context : unit -> context
-val get_ctxt : unit -> Proof.context
+  (*a state query: run on the current state, under that state's theory options*)
+val with_current_state : (Toplevel.state -> 'a) -> 'a
+val get_context : Toplevel.state -> context
+val get_ctxt : Toplevel.state -> Proof.context
 
 val update_toplevel_state : (Toplevel.state -> Toplevel.state) -> unit
 
@@ -225,9 +227,10 @@ fun collect_erros {outputs, error} =
 fun run_plugins cfg (plugins : plugins) (current,remaining,s) =
   let fun loop ret [] s = (ret, s)
         | loop ret ((name,collector)::plugins) s =
-        case collector cfg {current_command = current,
+        case PIDE_Loader.with_theory_options (fn s => collector cfg
+                           {current_command = current,
                             state = s,
-                            remaining = remaining}
+                            remaining = remaining}) s
           of (SOME out, SOME s') => loop ((name,out)::ret) plugins s'
            | (SOME out, NONE   ) => loop ((name,out)::ret) plugins s
            | (NONE    , SOME s') => loop ret plugins s'
@@ -284,22 +287,32 @@ val (origin_writeln, origin_tracing, origin_warning) =
     (!Private_Output.writeln_fn, !Private_Output.tracing_fn, !Private_Output.warning_fn)
 (* val _ = init_printers () *)
 
-(* Blanks 11 of the 13 Private_Output refs; system_message_fn (the startup-failure
-   diagnostic channel) and protocol_message_fn (protocol traffic the Scala peer must
-   answer) stay live by design.  Recount 11 + 2 = 13 on a distribution bump. *)
-fun disable_output () = (
-  Private_Output.writeln_fn := K () ;
-  Private_Output.writeln_urgent_fn := K () ;
-  Private_Output.state_fn := K () ;
-  Private_Output.information_fn := K () ;
-  Private_Output.tracing_fn := K () ;
-  Private_Output.warning_fn := K () ;
-  Private_Output.legacy_fn := K () ;
-  Private_Output.error_message_fn := K () ;
-  Private_Output.status_fn := K () ;
-  Private_Output.report_fn := K () ;
-  Private_Output.result_fn := K (K ())
-)
+(* The mute applies to the REPL world only.  It wraps 11 of the 13 Private_Output refs: a
+   message carrying a document exec id (PIDE_Loader.is_document_message) belongs to a theory
+   the PIDE document loads -- PIDE reports its progress and errors through these channels --
+   and passes; every other message is dropped.  system_message_fn (the startup-failure
+   diagnostic channel) and protocol_message_fn (protocol traffic the Scala peer must answer)
+   stay unwrapped.  Recount 11 + 2 = 13 on a distribution bump. *)
+fun disable_output () =
+  let
+    fun mute r =
+      let val f = !r
+      in r := (fn x => if PIDE_Loader.is_document_message [] then f x else ()) end
+    val result = !Private_Output.result_fn
+  in
+    mute Private_Output.writeln_fn;
+    mute Private_Output.writeln_urgent_fn;
+    mute Private_Output.state_fn;
+    mute Private_Output.information_fn;
+    mute Private_Output.tracing_fn;
+    mute Private_Output.warning_fn;
+    mute Private_Output.legacy_fn;
+    mute Private_Output.error_message_fn;
+    mute Private_Output.status_fn;
+    mute Private_Output.report_fn;
+    Private_Output.result_fn :=
+      (fn props => fn s => if PIDE_Loader.is_document_message props then result props s else ())
+  end
 
 (* val _ = Multithreading.parallel_proofs := 0 (*TODO: disable me!*) *)
 
@@ -324,75 +337,32 @@ exception REPL_fail of string
 
 fun is_theory_tok tok = Token.is_kind Token.Command tok andalso Token.content_of tok = "theory"
 
-(* Thy_Info.use_theories must not run concurrently with itself in one
-   process: schedule_theories ends with Execution.reset () (thy_info.ML:284),
-   which wipes the process-global exec table (execution.ML:238-241);
-   load_thy registers with Execution.running and raises Fail on collision
-   (thy_info.ML:364-366); and load_thy edits the global theory graph via
-   remove_thy (:371).  Every REPL-worker thread reaches the loader. *)
-val pure_loader_lock = Synchronized.var "Isa-REPL Pure loader" ()
-
-fun use_theories_exclusively qualifier targets_of =
-  Synchronized.change pure_loader_lock (fn () =>
-    (case targets_of () of
-      [] => ()
-    | targets => ignore (Thy_Info.use_theories (Options.default ()) qualifier targets)))
-
-(*
-fun use_theories options qualifier imports =
-  schedule_theories (#2 (require_thys options [] qualifier Path.current imports String_Graph.empty));
-*)
 fun evaluated_table () = the_default Symtab.empty (Thread_Data.get evaluated_theories)
 
+(* By name: the connection's table, the shared table, then the heap and the theories the
+   PIDE document loaded.  Never used to decide whether an import is loaded. *)
 fun lookup_theory name =
   get_first (fn look => look name)
     [Symtab.lookup (evaluated_table ()),
      Symtab.lookup (Synchronized.value global_theories),
-     Thy_Info.lookup_theory]
+     PIDE_Loader.lookup_theory]
 
-fun thy_loader import_dir thy_qualifier targets_str =
-  let val is_loaded = is_some o lookup_theory
-      val targets = map (Resources.import_name thy_qualifier (the_default Path.root import_dir))
-                        targets_str
-      fun load' import =
-        (case lookup_theory import of
-          SOME thy => thy
-        | NONE => raise REPL_fail ("Bad theory import " ^ import))
-
-      (*TODO: queue things to load and then process them together*)
-
-      (* The string handed to Thy_Info.use_theories is resolved a second time inside
-         Pure, against Path.current (thy_info.ML:463).  A theory that
-         Resources.find_theory_file can locate resolves there by itself; a
-         branch-4 record (absolute node_name, no session file) must be handed
-         its absolute path, or Pure looks for <cwd>/<Base>.thy; branch-1/3
-         records have no absolute path to hand, and for them that fallback is
-         the accepted residue (plan §6.3).
-         The second conjunct is load-bearing, not belt-and-braces: from a bare
-         path Pure recomputes the name as `theory_name qualifier (basename)`, which
-         equals #theory_name only when the import did NOT come from the session
-         structure.  For a session theory (find_theory_file = SOME) the name carries
-         a session qualifier the basename lacks, so passing the path would register
-         it under the wrong name and load' below would miss it.  The first
-         conjunct is not decorative either: a branch-3 record (qualified short
-         name, find_theory_file = NONE) has node_name = Path.basic theory_name,
-         and split_ext on that relative name would turn HOL-Library.Multiset
-         into HOL-Library. *)
-      fun loader_arg {node_name, theory_name, ...} =
-        if Path.is_absolute node_name andalso
-           not (is_some (Resources.find_theory_file theory_name))
-        then Path.implode (#1 (Path.split_ext node_name))
-        else theory_name
-
-      val _ =
-        if forall (is_loaded o #theory_name) targets then ()
-        else
-          use_theories_exclusively thy_qualifier (fn () =>
-            targets
-            |> filter_out (is_loaded o #theory_name)
-            |> map (rpair Position.none o loader_arg))
-   in map (load' o #theory_name) targets
-  end
+(* Imports: the REPL tables answer the theories they hold; all the others go to the loader
+   in one call.  Answers stay in request order: \005load replies by position, and the
+   order of parents changes the theory. *)
+fun thy_loader import_dir thy_qualifier imports =
+  let
+    val dir = the_default Path.root import_dir
+    fun repl_table s =
+      let val name = #theory_name (Resources.import_name thy_qualifier dir s)
+      in get_first (fn tab => Symtab.lookup tab name)
+          [evaluated_table (), Synchronized.value global_theories]
+      end
+    val held = map repl_table imports
+    val loaded =
+      burrow_options (PIDE_Loader.use_theories thy_qualifier dir)
+        (map2 (fn s => fn thy => if is_some thy then NONE else SOME s) imports held)
+  in map2 (fn a => fn b => the (merge_options (a, b))) held loaded end
 
 (* Recording a theory under its long name.  Before writing, drop every
    entry that is, or has among its ancestors, a theory of the same base
@@ -425,6 +395,11 @@ fun clear_evaluated_theories also_global =
 val eq_symb = Token.make ((1,0), "=") Position.none |> fst
 fun mk_idt s = Token.make ((2,0),s) Position.none |> fst
 
+(* PIDE's init function for a command that must not begin a theory (document.ML:719) *)
+fun illegal_init _ = error "Illegal theory header"
+
+(* The theory a header in source begins, and the init function of its header command:
+   PIDE_Loader.init_theory applies the header options and `condition`. *)
 fun init_thy ignore_imports {thy_qualifier, base_dir, additional_libs, configs, import_dir, attributes,...} source =
   let val toks = Token.tokenize pure_keywords {strict = false} source
       val i = find_index is_theory_tok toks
@@ -433,10 +408,7 @@ fun init_thy ignore_imports {thy_qualifier, base_dir, additional_libs, configs, 
    else let
       val header_toks = List.drop (toks, i)
       val header = Thy_Header.read_tokens (Token.pos_of (hd header_toks)) header_toks
-
-      fun qualify_name {name,imports,keywords} =
-            {name=apfst (Long_Name.qualify thy_qualifier) name, imports=imports, keywords=keywords}
-      val header = qualify_name header
+      val (name, pos) = #name header
 
       (* init theory *)
       (* PREPEND additional_libs (before the target's own imports): the injected
@@ -451,7 +423,12 @@ fun init_thy ignore_imports {thy_qualifier, base_dir, additional_libs, configs, 
             else thy_loader import_dir thy_qualifier (map fst imports)
       val parents =
             if null parents then [Pure] else parents
-   in Resources.begin_theory base_dir header parents
+      (* begin_theory reads only name, position and keywords (resources.ML:314-323) *)
+      val thy_record : Resources.thy =
+        {name = {node = "", master_dir = base_dir, theory = Long_Name.qualify thy_qualifier name},
+         pos = pos, imports = [], options = [], keywords = #keywords header,
+         condition_bad = (false, ""), errors = [], initiators = []}
+   in Resources.begin_theory thy_record parents
    |> Config.put_global Printer.show_markup false
    |> Config.put_global Printer.show_type_emphasis false
    |> (fn thy =>
@@ -477,32 +454,35 @@ fun init_thy ignore_imports {thy_qualifier, base_dir, additional_libs, configs, 
        in Thm.theory_attributes attrs Drule.dummy_thm thy
        |> snd
       end )
-   |> SOME
+   |> (fn thy => SOME (thy, PIDE_Loader.init_theory (#options header) thy))
   end
   end
 
+(* the theory to parse with, and the init function of a header command in the source *)
 fun get_thy rm_thy cfg state source = (
       if can Toplevel.theory_of state <> Toplevel.is_toplevel state then ()
       else error "BUG: K/aPbPakSCOMOSqoevPh+g"
     ; case try Toplevel.theory_of state
-          of SOME thy => thy
+          of SOME thy => (thy, illegal_init)
            | NONE =>
       case init_thy false cfg source
-        of SOME thy => let
+        of SOME (thy, init) => let
             val path = Path.append (Resources.master_directory thy)
                                    (Path.explode (Context.theory_name {long=false} thy ^ ".thy"))
              in if File.exists path andalso rm_thy then File.rm path else ()
-              ; thy
+              ; (thy, init)
             end
-         | NONE => Pure)
+         | NONE => (Pure, illegal_init))
 
 (* fun split_commands src *)
 
 fun parse_text' thy init text =
-     Token.tokenize (Thy_Header.get_keywords thy) {strict = false} text
-  |> Outer_Syntax.parse_spans
-  |> map (` (Command_Span.content #> Outer_Syntax.parse_span thy init))
-  |> filter_out (Toplevel.is_ignored o fst)
+  let val keywords = Thy_Header.get_keywords thy
+   in Token.tokenize keywords {strict = false} text
+   |> Outer_Syntax.parse_spans (Keyword.command_kind keywords)
+   |> map (` (Command_Span.content #> Outer_Syntax.parse_span thy init))
+   |> filter_out (Toplevel.is_ignored o fst)
+  end
 
 fun lex_split drop_first drop_if_no_meet kws ATTACH P source =
   let val toks = Token.tokenize kws {strict = false} source
@@ -534,14 +514,14 @@ val split_thy_headers = lex_split false false pure_keywords Token.is_command_mod
    mechanism is kept but dead, see THEORY_LOADER_LAYERING_PLAN §7.5. *)
 fun parse_text (cfg:cfg) state source =
   let val write_thy = #write_thy cfg
-      val thy = get_thy write_thy cfg state source
+      val (thy, init) = get_thy write_thy cfg state source
    in if write_thy andalso not (pointer_eq (Pure, thy))
          andalso Path.expand (Resources.master_directory thy) = Path.expand (#base_dir cfg)
     then File.append (Path.append (Resources.master_directory thy)
                                   (Path.explode (Context.theory_name {long=false} thy ^ ".thy")))
                      (Symbol_Pos.content source)
     else ()
-    ; parse_text' thy (K thy) source
+    ; parse_text' thy init source
   end
 
 fun set_trace v =
@@ -555,7 +535,8 @@ fun set_register_thy v =
      | SOME (s,c,(tr,_),H) => Thread_Data.put state (SOME (s, c, (tr, v), H))
 
 val trim_err = map (trim_makrup o #2 o #1)
-fun catch_state' wid plugin_output err command range s : command_output = {
+fun catch_state' wid plugin_output err command range s : command_output =
+  PIDE_Loader.with_theory_options (fn s => {
         command = command,
         output  = get_and_clean_message' wid,
         latex   = NONE (*Toplevel.output_of s*),
@@ -567,18 +548,19 @@ fun catch_state' wid plugin_output err command range s : command_output = {
                             can Proof.raw_goal (Toplevel.proof_of s) andalso
                             not (Thm.no_prems (#goal (Proof.raw_goal (Toplevel.proof_of s))))
           },
-        level   = Toplevel.level s,
+        level   = Toplevel.proof_level s,
         state   = trim_makrup (Toplevel.pretty_state s |> Pretty.chunks |> Pretty.string_of),
         plugin_output = plugin_output,
         errors  = trim_err err,
         range   = range
-    }
+    }) s
 
-fun apply_single_cmd_timeout (Command_Span.Span (Command_Span.Command_Span (name, _), toks)) =
+fun apply_single_cmd_timeout (Command_Span.Span (Command_Span.Command_Span {name, ...}, toks)) =
       let val bad = ["auto_sledgehammer", "sledgehammer"]
        in not (member (op =) bad name) andalso
           not (exists (fn tok => member (op =) bad (Token.content_of tok)) toks)
       end
+  | apply_single_cmd_timeout _ = true
 
 fun last [] = error "no last"
   | last [x] = x
@@ -652,7 +634,7 @@ fun RE (cfg:cfg) source : command_outputs =
                                   can Proof.raw_goal (Toplevel.proof_of s) andalso
                                   not (Thm.no_prems (#goal (Proof.raw_goal (Toplevel.proof_of s))))
                 },
-              level   = Toplevel.level s,
+              level   = Toplevel.proof_level s,
               state   = "",
               plugin_output = [],
               errors  = trim_err err,
@@ -669,18 +651,20 @@ fun RE (cfg:cfg) source : command_outputs =
                   if Toplevel.is_malformed tr
                   then let val thy = Toplevel.theory_of s
                         in Command_Span.content current_cmd
-                        |> Outer_Syntax.parse_span thy (K thy)
+                        |> Outer_Syntax.parse_span thy illegal_init
                         |> rpair current_cmd
                        end
                   else (tr,current_cmd)
+                (* under the theory options of the state it starts from *)
+                val step = PIDE_Loader.with_theory_options (Toplevel.command_errors tr)
              in case (case #single_cmd_timeout cfg
-                    of NONE => Toplevel.command_errors false tr s
+                    of NONE => step s
                      | SOME time =>
                           if apply_single_cmd_timeout current_cmd
-                          then Timeout.apply time (Toplevel.command_errors false tr) s
+                          then Timeout.apply time step s
                                handle Timeout.TIMEOUT t =>
                                   ([((serial(), "Timeout after " ^ Time.toString t ^ "s"), NONE)], NONE)
-                          else Toplevel.command_errors false tr s )
+                          else step s )
               of (err, NONE)    =>
                   let val Er = case trim_err err @ errs
                                  of [] => "Some error happens. Details may be given in the field `outputs.errors.` \
@@ -713,7 +697,7 @@ fun init_repler thy =
   let val id = ID_counter ()
    in Thread_Data.put Session_ID (SOME (id, []))
     ; Synchronized.change message_buffer (Inttab.update_new (id, []))
-    ; Thread_Data.put state (SOME (Toplevel.make_state thy, 0, (true, true), []))
+    ; Thread_Data.put state (SOME (Toplevel.make_state (Option.map Context.Theory thy), 0, (true, true), []))
     ; id
   end
 
@@ -739,7 +723,7 @@ fun declare attributes =
                 else if Toplevel.is_theory s0
                 then Toplevel.theory (Context.theory_map app) Toplevel.empty
                 else Toplevel.local_theory NONE NONE (Context.proof_map app) Toplevel.empty
-       val s' = Toplevel.command_exception false tr s0
+       val s' = PIDE_Loader.with_theory_options (Toplevel.command_exception tr) s0
     in Thread_Data.put state (SOME (s',cnt,xx,H))
    end
 
@@ -766,7 +750,7 @@ fun lex_commands cfg source =
       fun parse [] = []
         | parse (src::srcs) =
         let val thy = case init_thy false cfg src
-                        of SOME thy => thy
+                        of SOME (thy, _) => thy  (*only the theory: no header command runs*)
                          | NONE =>
                             if null srcs
                             then raise REPL_fail ("fail to load the theory " ^ Path.implode (#base_dir cfg))
@@ -863,7 +847,7 @@ fun rollback_state cfg name =
      | SOME s' => let
        val (plugin_output, s'') =
             run_plugins cfg plugins (Command_Span.Span
-                                        (Command_Span.Command_Span ("<rollback>", Position.none), []),
+                                        (Command_Span.Command_Span {name = "<rollback>", kind = "", pos = Position.none}, []),
                                      [],
                                      s')
     in Thread_Data.put state (SOME (s'', cnt, t, H))
@@ -884,7 +868,7 @@ fun rollback_state_global cfg name store =
      | SOME s' => let
        val (plugin_output, s'') =
             run_plugins cfg plugins (Command_Span.Span
-                                        (Command_Span.Command_Span ("<rollback>", Position.none), []),
+                                        (Command_Span.Command_Span {name = "<rollback>", kind = "", pos = Position.none}, []),
                                      [],
                                      s')
     in Thread_Data.put state (SOME (s'', cnt, t, H))
@@ -905,7 +889,7 @@ fun list_states' cfg () =
      | SOME (_,_,_,H) => map (apsnd (fn s' =>
           catch_state' wid (#1 (
             run_plugins cfg plugins (Command_Span.Span
-                                        (Command_Span.Command_Span ("<list>", Position.none), []),
+                                        (Command_Span.Command_Span {name = "<list>", kind = "", pos = Position.none}, []),
                                      [],
                                      s')
           )) [] "" (Position.none, Position.none) s'
@@ -913,20 +897,14 @@ fun list_states' cfg () =
 
 (** Parser **)
 
-fun parse_term term =
-  case Thread_Data.get state
-    of NONE           => raise REPL_fail  "INTERNAL ERROR: state lost"
-     | SOME (s,_,_,_) => (
+fun parse_term s term =
   case try Toplevel.context_of s
     of SOME ctxt => (ctxt, Syntax.read_term ctxt term)
      | NONE     => raise REPL_fail "Not in a theory context.\n\
             \You must evaluate at least a theory head (e.g., 'theory THY imports Main begin') to \
-            \indicate the theory under which the term will be parsed." )
+            \indicate the theory under which the term will be parsed."
 
-fun retrieve_fact name =
-  case Thread_Data.get state
-    of NONE           => raise REPL_fail  "INTERNAL ERROR: state lost"
-     | SOME (s,_,_,_) => (
+fun retrieve_fact s name =
   case try Toplevel.context_of s
     of SOME ctxt =>
       let val keywords = Thy_Header.get_keywords (Proof_Context.theory_of ctxt)
@@ -936,14 +914,11 @@ fun retrieve_fact name =
       end
      | NONE     => raise REPL_fail "Not in a theory context.\n\
             \You must evaluate at least a theory head (e.g., 'theory THY imports Main begin') to \
-            \indicate the theory under which the term will be parsed." )
+            \indicate the theory under which the term will be parsed."
 
 (** Sledgehammer **)
 
-fun sledgehammer timeout' =
-  case Thread_Data.get state
-    of NONE           => raise REPL_fail  "INTERNAL ERROR: state lost"
-     | SOME (s,_,_,_) => (
+fun sledgehammer s timeout' = (
   case try Toplevel.proof_of s
     of SOME stat =>
        let val timeout = Time.fromSeconds timeout'
@@ -979,17 +954,14 @@ fun sledgehammer timeout' =
        end
      | NONE      => raise REPL_fail "Not in a proof context." )
 
-fun gen_premise_selection select param override number =
+fun gen_premise_selection select s param override number =
   (*number: how many facts do you want me to return*)
-  case Thread_Data.get state
-    of NONE           => raise REPL_fail  "INTERNAL ERROR: state lost"
-     | SOME (s,_,_,_) => (
   case try Toplevel.proof_of s
     of SOME stat =>
        let val {context, facts, goal} = Proof.raw_goal stat
         in select param override number context facts goal
        end
-     | NONE      => raise REPL_fail "Not in a proof context." )
+     | NONE      => raise REPL_fail "Not in a proof context."
 
 
 val premise_selection_each_goal = gen_premise_selection Premise_Selection.SH_select
@@ -1017,9 +989,12 @@ fun update_toplevel_state F =
     of NONE           => raise REPL_fail  "INTERNAL ERROR: state lost"
      | SOME (s,b,c,d) => Thread_Data.put state (SOME (F s, b, c, d))
 
-fun get_context () =
-  let val s = get_toplevel_state ()
-   in case (try Toplevel.context_of s, try Toplevel.proof_of s)
+(* A state query: the connection's current state, read once; the query's computation and its
+   output run under that state's theory options (a print option is read when printing). *)
+fun with_current_state f = PIDE_Loader.with_theory_options f (get_toplevel_state ())
+
+fun get_context s =
+     case (try Toplevel.context_of s, try Toplevel.proof_of s)
     of (SOME ctxt, prfstate) =>
       let
         val facts = Proof_Context.facts_of ctxt
@@ -1052,15 +1027,11 @@ fun get_context () =
                        | SOME s => Thm.cprems_of (#goal (Proof.goal s)) )}
       end
      | (NONE, _) => raise REPL_fail "Not in a proof context."
-  end
 
-fun get_ctxt () =
-  case Thread_Data.get state
-    of NONE           => raise REPL_fail  "INTERNAL ERROR: state lost"
-     | SOME (s,_,_,_) => (
+fun get_ctxt s =
   case try Toplevel.context_of s
     of SOME ctxt => ctxt
-     | NONE => raise REPL_fail "Not in a proof context." )
+     | NONE => raise REPL_fail "Not in a proof context."
 
 (** Auxiliary **)
 
@@ -1095,11 +1066,8 @@ fun parse_thy_header (cfg:cfg) text =
                 }
       val symbs = Symbol_Pos.explode (text, pos)
       val toks = Token.tokenize pure_keywords {strict = false} symbs
-      val header = Thy_Header.read_tokens pos toks
-      fun qualify_name {name,imports,keywords} =
-            {name=apfst (Long_Name.qualify (#thy_qualifier cfg)) name, imports=imports, keywords=keywords}
-      val header = qualify_name header
-   in header
+      val {name, imports, options, keywords} = Thy_Header.read_tokens pos toks
+   in Thy_Header.make (apfst (Long_Name.qualify (#thy_qualifier cfg)) name) imports options keywords
   end
 
 end

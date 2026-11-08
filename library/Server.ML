@@ -169,6 +169,9 @@ fun column_to_offset src (line, column) =
 
 structure Postab = Table(type key = string * int val ord = prod_ord fast_string_ord int_ord);
 
+(* Memory supervision: commented out since the Isabelle2026 port.
+   OS.Process.terminate is no longer available to Isabelle/ML (NEWS), and the
+   threshold reads ML_MAX_HEAP, which only MLML's init.sh sets.
 val supervision_threads = Synchronized.var "supervision_threads" NONE
 fun run_resource_supervison base_dir =
   let val sleep_time = Time.fromSeconds 10
@@ -197,7 +200,7 @@ fun run_resource_supervison base_dir =
                   File_Stream.outputs stream [k, " = ", v, "  "] ) stat
               ; File_Stream.outputs stream ["\n"]
               ; BinIO.flushOut stream
-              ; OS.Process.sleep sleep_time
+              ; Time.sleep sleep_time
             end
           ; ()
         end) (Path.append base_dir (Path.basic "ML_res_log"))
@@ -208,7 +211,7 @@ fun run_resource_supervison base_dir =
                                        |> Isabelle_Thread.interrupts )
                                         run )
          | some => some)
-  end
+  end *)
 
 (* Wire protocol version.  The handshake below accepts exactly this string;
    the Python client sends Client.PROTOCOL_VERSION. *)
@@ -225,7 +228,7 @@ fun startup base_dir_of_theories0 thy0 addr0 =
      parse_text's `master_directory = base_dir` guard and any consumer keyed on
      a theory's master_dir all need the absolute form.
      Path.expand alone is not enough: it resolves ~ and $VAR, not `./tmp`. *)
-  let val base_dir_of_theories = File.absolute_path base_dir_of_theories0
+  let val base_dir_of_theories = Path.absolute base_dir_of_theories0
       val _ = if File.is_dir base_dir_of_theories
               then warning ("The base_dir_of_theories already exists. The shell may overwrite files.")
               else if File.exists base_dir_of_theories
@@ -264,7 +267,7 @@ fun startup base_dir_of_theories0 thy0 addr0 =
    in writeln msg
     ; Output.physical_stdout msg
     ; Output.physical_stderr msg
-    ; run_resource_supervison base_dir_of_theories
+    (* ; run_resource_supervison base_dir_of_theories *)
     ; Isabelle_Thread.fork (  Isabelle_Thread.params ("REPL server " ^ addr0)
                            |> Isabelle_Thread.interrupts )  (fn () => (
       Synchronized.change servers (Symtab.update_new (addr0, Isabelle_Thread.self ()))
@@ -348,11 +351,11 @@ fun startup base_dir_of_theories0 thy0 addr0 =
                      but not for `file`), and a relative one would be resolved
                      against the ML process's working directory, a throwaway
                      directory of the launcher that no client knows. *)
-                  import_dir = SOME (File.absolute_path (Path.dir path)),
+                  import_dir = SOME (Path.absolute (Path.dir path)),
                   single_cmd_timeout = #single_cmd_timeout (!cfg),
                   attributes = (case attrs of SOME a => a
                                             | NONE => #attributes (!cfg)),
-                  base_dir = File.absolute_path (Path.dir path),
+                  base_dir = Path.absolute (Path.dir path),
                   write_thy = false }
             end
 
@@ -440,34 +443,39 @@ fun startup base_dir_of_theories0 thy0 addr0 =
                            val his = REPL.list_states' (!cfg) ()
                         in output cout (packPairList (packString, REPL_Serialize.command_output_packer)) his
                        end
+                   (* the state queries: arguments first, then the computation and its
+                      output on the current state, under its theory options *)
                  | "\005sexpr_term" => let
                            val str = read unpackString
-                           val (_, term) = REPL.parse_term str
-                        in output cout REPL_Serialize.s_expression_packer term
+                        in REPL.with_current_state (fn s =>
+                             output cout REPL_Serialize.s_expression_packer
+                                    (#2 (REPL.parse_term s str)))
                        end
                  | "\005fact" => let
                            val str = read unpackString
-                           val (ctxt, thms) = REPL.retrieve_fact str
-                        in output cout (packList packString)
-                                       (map (REPL.trim_makrup o Syntax.string_of_term ctxt o Thm.prop_of) thms)
+                        in REPL.with_current_state (fn s =>
+                             let val (ctxt, thms) = REPL.retrieve_fact s str
+                              in output cout (packList packString)
+                                   (map (REPL.trim_makrup o Syntax.string_of_term ctxt o Thm.prop_of) thms)
+                             end)
                        end
                  | "\005sexpr_fact" => let
                            val str = read unpackString
-                           val (_, thms) = REPL.retrieve_fact str
-                        in output cout (packList packString)
-                                       (map (REPL_Serialize.s_expression o Thm.prop_of) thms)
+                        in REPL.with_current_state (fn s =>
+                             output cout (packList packString)
+                               (map (REPL_Serialize.s_expression o Thm.prop_of)
+                                    (#2 (REPL.retrieve_fact s str))))
                        end
                  | "\005hammer" => let
                            val timeout = read unpackInt
-                           val proof = REPL.sledgehammer timeout
-                        in output cout packString proof
+                        in REPL.with_current_state (fn s =>
+                             output cout packString (REPL.sledgehammer s timeout))
                        end
                  | "\005context" => let
                            val pp = read unpackString
-                           val ctxt = REPL.get_ctxt ()
-                           val pp = REPL_Serialize.pack_context pp (Context.Proof ctxt)
-                           val state = REPL.get_context ()
-                        in output cout pp state
+                        in REPL.with_current_state (fn s =>
+                             let val pp = REPL_Serialize.pack_context pp (Context.Proof (REPL.get_ctxt s))
+                              in output cout pp (REPL.get_context s) end)
                        end
                  | "\005qualifier" => let
                            val qualifier = read unpackString
@@ -679,7 +687,7 @@ fun startup base_dir_of_theories0 thy0 addr0 =
                  | "\005thy_header" => let
                            val src = read unpackString
                            val h = REPL.parse_thy_header (!cfg) src
-                           fun packer {name, imports, keywords} =
+                           fun packer {name, imports, keywords, ...} =
                                packTuple3 (
                                   packString o fst,
                                   packList (packString o fst),
@@ -699,14 +707,14 @@ fun startup base_dir_of_theories0 thy0 addr0 =
                                        unpackPairList (unpackString, unpackString),
                                        unpackString,
                                        unpackString ))
-                           val ts = REPL.get_toplevel_state ()
+                        in REPL.with_current_state (fn ts => let
                            val params = Sledgehammer_Commands.default_params @{theory} params
 
                            val ctxt = Toplevel.context_of ts
                            val pp = REPL_Serialize.term_packer pp (Context.Proof ctxt)
                         in case mode
                              of "final" => let
-                           val ret = REPL.premise_selection_ultimate_goal params Sledgehammer_Fact.no_fact_override num
+                           val ret = REPL.premise_selection_ultimate_goal ts params Sledgehammer_Fact.no_fact_override num
                                   |> map_filter (fn (x, facts) =>
                                         if member (op =) methods x
                                         then SOME facts
@@ -716,7 +724,7 @@ fun startup base_dir_of_theories0 thy0 addr0 =
                            in output cout (packPairList (packString, pp o Thm.prop_of)) ret
                           end
                              | "each" => let
-                           val ret = REPL.premise_selection_each_goal params Sledgehammer_Fact.no_fact_override num
+                           val ret = REPL.premise_selection_each_goal ts params Sledgehammer_Fact.no_fact_override num
                                   |> map (map_filter (fn (x, facts) =>
                                         if member (op =) methods x
                                         then SOME facts
@@ -728,7 +736,7 @@ fun startup base_dir_of_theories0 thy0 addr0 =
                         in output cout (packList (packPairList (packString, pp o Thm.prop_of))) ret
                        end
                              | "leading" => let
-                           val ret = REPL.premise_selection_leading_goal params Sledgehammer_Fact.no_fact_override num
+                           val ret = REPL.premise_selection_leading_goal ts params Sledgehammer_Fact.no_fact_override num
                                   |> map_filter (fn (x, facts) =>
                                         if member (op =) methods x
                                         then SOME facts
@@ -739,6 +747,7 @@ fun startup base_dir_of_theories0 thy0 addr0 =
                         in output cout (packPairList (packString, pp o Thm.prop_of)) ret
                        end
                              | _ => raise REPL.REPL_fail "bad argument 'mode'"
+                        end)
                        end
                   | "\005symbpos" => let
                            val text = read unpackString
@@ -850,26 +859,20 @@ fun kill_server address =
 
 end
 
-(* The `isabelle REPL` tool starts the server through this command.  startup
-   binds, listens, prints the banner and forks the accept thread, then
-   returns that thread (Server.ML:290-314), so the handler does not block
-   the protocol loop.  Two guards make the tool's send order a property of
-   the code: Isa_REPL.Isa_REPL must be present in Thy_Info's graph (on a
-   fresh load it enters only after every theory future joined; on a heap
-   that already holds it the guard passes trivially), and startup runs at
-   most once per process.  A second fork supervises the accept thread: the
-   old repl_server.sh joined it and the build died with it; here its end is
-   reported so the tool exits non-zero.  The failure render is guarded as
-   in repl_boot.ML; the four lines are repeated because that file is a raw
-   prelude and this one must also compile without it: an ordinary
-   isabelle build of a session holding Isa_REPL runs with no prelude at
-   all (build_job.scala:255). *)
+(* The `isabelle REPL` tool starts the server through this command, after its
+   load of Isa_REPL.Isa_REPL through the PIDE document has returned: the order
+   load-then-startup is the order of the tool's Scala code.  This handler runs on
+   the protocol thread, so it must not call Scala (PIDE_Loader).  startup binds,
+   listens, prints the banner and forks the accept thread, then returns that
+   thread, so the handler does not block the protocol loop.  It runs at most once
+   per process.  A second fork supervises the accept thread: its end is reported
+   so the tool exits non-zero.  The failure render is guarded as in build.ML:
+   exn_message_list can itself raise, and then the tool would hear no answer and
+   wait out -T. *)
 val isa_repl_started = Synchronized.var "Isa_REPL.startup" false;
 fun isa_repl_startup [addr, dir, mute] =
       (case Exn.capture_body (fn () =>
-              (if is_none (Thy_Info.lookup_theory "Isa_REPL.Isa_REPL")
-               then error "Isa_REPL.startup before Isa_REPL.load finished" else ();
-               Synchronized.change isa_repl_started
+              (Synchronized.change isa_repl_started
                  (fn true => error "Isa_REPL.startup called twice" | false => true);
                if Value.parse_bool mute then REPL.disable_output () else ();
                REPL_Server.startup (Path.explode dir) NONE addr)) of

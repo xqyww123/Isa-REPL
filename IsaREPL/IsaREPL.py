@@ -42,6 +42,9 @@ class CommandFlags:
         is_theory: Whether the state is within a theory block and at the toplevel of this block
         is_proof: Whether the state is working on proving some goal
         has_goal: Whether the state has some goal to prove, or all goals are proven
+
+    Inside a proof that Isabelle skips (the theory header's `condition` or
+    `condition_proofs` is false), all four flags are false.
     """
     def __init__(self, is_toplevel: bool, is_theory: bool, is_proof: bool, has_goal: bool):
         self.is_toplevel = is_toplevel
@@ -325,14 +328,13 @@ class Client:
         """
         The recording switch of this connection: whether to record evaluated
         theories into this connection's theory table. It only controls that
-        recording; it never registers anything into Isabelle's own theory
-        loader. Default: on.
+        recording. Default: on.
 
         With recording off, a later `theory B imports A` in the same connection
-        cannot see A in this connection's theory table, so Isabelle looks for
-        A.thy on disk: an error (No such file) if A only ever existed as source
-        sent over the socket, or a silent reload of the on-disk file if A's
-        source file exists.
+        cannot see A in this connection's theory table, so the server loads
+        A.thy from disk: if A only ever existed as source sent over the socket,
+        the import fails with an error that names the missing file; if A's
+        source file exists, that file is loaded (read once per server process).
         """
         self._chk_live()
         if not isinstance(value, bool):
@@ -410,7 +412,10 @@ class Client:
         context. This type is defined in `$ISABELLE_HOME/src/Pure/Isar/toplevel.ML`.
 
         The same file also provides useful interfaces to allow you to for example,
-        access the proof state by `Toplevel.proof_of`.
+        access the proof state by `Toplevel.proof_of`. A proof that Isabelle
+        skips (the theory header's `condition` or `condition_proofs` is false)
+        is not a proof state, and `Toplevel.proof_of` raises on it: guard with
+        `Toplevel.is_proof`.
         ($ISABELLE_HOME is the base directory of your Isabelle installation,
          you could run `isabelle getenv -b ISABELLE_HOME` to obtain this location).
 
@@ -659,11 +664,15 @@ class Client:
 
     async def load_theory(self, targets: list[str], thy_qualifier: str = "") -> list[str]:
         """
-        Load theories. Short names can be used if the thy_qualifier is indicated.
-        Otherwise, full names must be used.
-        The target theories to be loaded must be registered to the Isabelle system
-        through the `isabelle component -u` commands.
-        The method returns the full names of the loaded theories.
+        Load theories. Each target is resolved as an import in a theory header
+        is (short names are qualified by `thy_qualifier`): a theory in the
+        theory tables, a theory of the logic's heap, or a theory file that
+        Isabelle finds (see the README, "Theory tables" and "Theories loaded
+        from files"). A target may also be the absolute path of a theory file,
+        without `.thy`; a relative path is resolved against `/`.
+        The method returns the full names of the loaded theories, in the order
+        of the targets. A file is read once per server process and named by its
+        folder (see the README, "Theories loaded from files").
         """
         self._chk_live()
         if not isinstance(thy_qualifier, str):
@@ -724,8 +733,8 @@ class Client:
         """
         Clear this connection's theory table (the theories recorded by
         evaluating `theory ... end` with the recording switch on, see
-        `set_register_thy`). Afterwards an import of such a theory falls
-        through to Isabelle's own theory loader, exactly as with recording off.
+        `set_register_thy`). Afterwards an import of such a theory is loaded
+        from its file, exactly as with recording off.
         `rollback` never touches this table; this method is the only way to
         shrink it short of closing the connection.
 

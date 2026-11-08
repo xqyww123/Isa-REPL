@@ -32,6 +32,19 @@ MODULE="$(sed -n 's/^[[:space:]]*module[[:space:]]*=[[:space:]]*//p' "$COMP/etc/
 ID="$(isabelle getenv -b ISABELLE_IDENTIFIER)"
 [ -n "$ID" ] || { echo "ISABELLE_IDENTIFIER is empty" >&2; exit 2; }
 
+# every env:NAME requirement of build.props (e.g. ISABELLE_RPC_JAR, the jar of another
+# component) is resolved here, in the caller's environment, and exported into the
+# throwaway build, where only the copy itself is registered
+for NAME in $(grep -o 'env:[A-Za-z_][A-Za-z0-9_]*' "$COMP/etc/build.props" | sed 's/^env://' | sort -u); do
+  VALUE="$(isabelle getenv -b "$NAME")"
+  [ -n "$VALUE" ] || {
+    echo "requirement env:$NAME of $COMP/etc/build.props is empty here:" \
+      "register the component that defines it (isabelle components -u DIR)" >&2
+    exit 2
+  }
+  export "$NAME=$VALUE"
+done
+
 T="$(mktemp -d)"
 H="$(mktemp -d)"
 trap 'rm -rf "$T" "$H"' EXIT

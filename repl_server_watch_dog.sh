@@ -36,6 +36,20 @@ if [ -z "$(isabelle getenv -b ISA_REPL_HOME)" ]; then
   exit 2
 fi
 
+# Isa-REPL loads theories through Isabelle_RPC's loader, which lives in its jar.  Without
+# the jar `isabelle REPL` fails at once, and the loop below would restart it forever.
+if [ ! -f "$(isabelle getenv -b ISABELLE_RPC_JAR)" ]; then
+  echo "ERROR: ISABELLE_RPC_JAR names no file, so Isabelle_RPC is not registered on this" >&2
+  echo "       machine or is not up to date; Isa-REPL needs it to load theories." >&2
+  echo "       From a checkout of Isabelle_RPC: update the checkout, and if it is not" >&2
+  echo "       registered yet, register it once with:" >&2
+  echo "           isabelle components -u <Isabelle_RPC directory>" >&2
+  echo "       From conda: update the package isabelle-rpc instead, and do not also" >&2
+  echo "       register a checkout: two copies make every Isabelle tool fail with" >&2
+  echo "       \"Duplicate session\"." >&2
+  exit 2
+fi
+
 while true; do
   isabelle REPL "$@"
   echo "The server terminated with code $?.  Killing port $port and rebooting..." >&2

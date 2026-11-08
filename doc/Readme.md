@@ -18,19 +18,23 @@ Unofficial support for Isabelle's Read-Eval-Print-Loop.
 
 ## Installation
 
-We support [Isabelle2025-2](https://isabelle.in.tum.de/).
+We support [Isabelle2026](https://isabelle.in.tum.de/), on the `main` branch.
+Older Isabelle releases are no longer supported; their branches (e.g. `Isabelle2025-2`)
+stay as they were.
 
 Ensuring `<ISABELLE-BASE-DIRECTORY>/bin` is in your `$PATH` environment
 ```
 git clone https://github.com/xqyww123/Isa-REPL.git
 cd Isa-REPL
-git checkout $(isabelle version) # Error can raise if you are using an unsupported version of Isabelle
 isabelle components -u .
 pip install IsaREPL
 ```
 `isabelle components -u .` registers Isa-REPL as an Isabelle component on this
 machine (run it once per machine, with an absolute path); the `isabelle REPL`
 tool below is only available once it is registered.
+Isa-REPL needs the Isabelle components Isabelle_RPC, Auto_Sledgehammer and
+Performant_Isabelle_ML installed and registered in the same way
+(`isabelle components -u <dir>`), or installed with conda.
 ## Start up the REPL server
 
 ```
@@ -69,6 +73,15 @@ To evaluate a whole theory file
 The REPL server (or the Isabelle system) becomes unstable when the number of parallel threads exceeds 100.
 We suggest to launch multiple servers if your machine has more than 64 cpu cores, and give every server at most 64 cores by setting option `-o threads=64` 
 
+### Memory
+
+The server's ML process has Isabelle's default heap limit: 16 GB on the default (and
+recommended) platform `x86_64_32`. The server's JVM is limited by the `-Xmx4g` in
+`ISABELLE_TOOL_JAVA_OPTIONS`; every theory the server loads from a file stays in the JVM's
+document model for the life of the server, so a server that loads many theories may need
+more. To raise it, set the variable in `$ISABELLE_HOME_USER/etc/settings`, for example
+`ISABELLE_TOOL_JAVA_OPTIONS="-Djava.awt.headless=true -Xms512m -Xmx16g -Xss16m"`.
+
 ### Documents
 
 All documents are given as docstrings attaching to Python client interfaces, see [the source](./IsaREPL/IsaREPL.py).
@@ -82,15 +95,27 @@ Sledgehammer (via our `auto_sledgehamemr` wrapper, see [example](./examples/exam
 It is possible to implement a client in other languages. However, the document for the communication protocol is not provided and I refer you to read our source code, as it should be simple enough.
 ### Theory tables and their lifetime
 
-Each connection keeps its own theory table: the theories it evaluates with `theory ... end` are recorded there, under their long names, as long as the recording switch is on (`set_register_thy`, on by default). A second table, shared by all connections of the server, exists for future use. When the REPL resolves an import it looks in the connection's table first, then the shared table, then Isabelle's own theory loader.
+Each connection keeps its own theory table: the theories it evaluates with `theory ... end` are recorded there, under their long names, as long as the recording switch is on (`set_register_thy`, on by default). A second table, shared by all connections of the server, exists for future use. When the REPL resolves an import it looks in the connection's table first, then the shared table; every other import is a theory of the logic's heap or a theory loaded from its file (below).
 
-The recording switch only controls that recording; it never registers anything into Isabelle's theory loader. With recording off, a later `theory B imports A` in the same connection cannot see A in this connection's theory table, so Isabelle looks for A.thy on disk: an error (No such file) if A only ever existed as source sent over the socket, or a silent reload of the on-disk file if A's source file exists.
+The recording switch only controls that recording. With recording off, a later `theory B imports A` in the same connection cannot see A in this connection's theory table, so the server loads A.thy from disk: if A only ever existed as source sent over the socket, the import fails with an error that names the missing file; if A's source file exists, that file is loaded.
 
 Entries live until the connection closes or `clear_evaluated_theories` is called; `clear_evaluated_theories(True)` also clears the shared table, which affects every connection. `rollback` restores the toplevel state but does not roll back the theory table.
 
 Re-evaluating a theory of the same base name replaces the old entry and drops any recorded theory whose ancestry contained the old one, so that importing the new theory does not hit the kernel's "Duplicate theory name". This does invalidate recorded dependants that were built, through this same table, on the old theory. There remain four ways a superseded theory can stay reachable — same-connection rollback, cross-connection rollback through the file cache, the two separate tables, and shadowing in the other direction — all inherent to the kernel's base-name rule and left as they are.
 
 `path_of_theory` returns the absolute path of a theory's source file, and answers only for theories whose source file exists on disk; it raises otherwise.
+
+### Theories loaded from files
+
+A theory that the server loads from a file (an import that is neither in the logic's heap nor in a theory table above, `load_theory`, the theory of a plugin) is loaded through the PIDE document model of the server's session, as Isabelle/jEdit loads it. The file, and the files it loads with `ML_file` and the like, is read once per server process: later changes on disk are not seen until the server restarts. Messages of these theories are never muted; with `-L FILE` they appear in that file.
+
+A theory file that the server loads from disk, because something imports it, gets one long name for the life of the server process. The name is decided by the folder the file lies in when it is first loaded: `S.<file name>` if the folder belongs to a session `S` that Isabelle knows (the Isabelle installation, registered components such as the AFP, folders given with `-d`), otherwise `Draft.<file name>`, as in Isabelle/jEdit. The file's own imports are resolved as Isabelle resolves them under that name: as in `isabelle build` of `S`, or, for a `Draft` file, as in Isabelle/jEdit (write `imports "HOL.List"`, not `imports List`). If the file is the source of a theory in the logic's heap, the heap theory is used. `load_theory` returns these names. The qualifier of a request still decides which file an import string means (Isabelle tries the string as a theory name before it treats it as a path) and under which name the theory tables above are searched. Theories the server evaluates itself (`eval`, `file`) are named as before.
+
+Two different files are never loaded under one long name: the second request is refused with an error that names both files. A `Draft` theory is requested by its file's path, not by the name `Draft.<file name>`.
+
+### Theory header options
+
+A theory the server evaluates itself (`eval`, `file`) honours the options of its header, as Isabelle does for a theory file (`theory T imports Main options [quick_and_dirty = false] begin`). They apply to that theory's body only, not to its imports nor to the theories importing it; options set by the client (`configs`, `config`, `declare`) take precedence. If the header's `condition` is false, the theory is skipped silently: no error, its body has no effect (the traced state reads `skipped theory` or `skipped proof`, and inside a skipped proof the flags `is_toplevel`, `is_theory`, `is_proof` and `has_goal` are all false), `end` records a theory that holds only its header, and `file` returns no errors. The reason is not reported to the client.
 ## Contribution
 
 Feel free to open any GitHub issue if you have any feature requests.

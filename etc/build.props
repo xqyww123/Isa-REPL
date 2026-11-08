@@ -5,7 +5,8 @@ title = Isabelle/Scala/Isa_REPL
 module = lib/isa_repl.jar
 no_build = true
 requirements = \
-  env:ISABELLE_SCALA_JAR
+  env:ISABELLE_SCALA_JAR \
+  env:ISABELLE_RPC_JAR
 sources = \
   src/scala/repl_tool.scala
 services = \

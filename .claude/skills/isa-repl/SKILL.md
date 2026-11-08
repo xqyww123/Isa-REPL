@@ -11,22 +11,35 @@ Isa-REPL provides a programmatic REPL (Read-Eval-Print-Loop) interface for Isabe
 
 **Path:** repository root (this project, i.e. `contrib/Isa-REPL/`).
 
-Packaged as the pip project **`IsaREPL`** (see `pyproject.toml`, currently version 0.14.1, prebuilt wheel under `dist/`). Installable with `pip install IsaREPL`. Only Isabelle2024 is officially supported.
+Packaged as the pip project **`IsaREPL`** (see `pyproject.toml`, currently version 0.14.1, prebuilt wheel under `dist/`). Installable with `pip install IsaREPL`. Supports Isabelle2026 only (branch `main`).
 
 ## IMPORTANT: Theories are auto-loaded — the heap is only a speed cache
 
 A common misconception is that only theories compiled into the running
 session's heap can be used. **False.** Isa-REPL auto-loads any imported theory
-not in the heap from its `.thy` source (`thy_loader` → `Thy_Info.use_theories`
-in `library/REPL.ML`). Heap vs. source-loaded is **equivalent** — the only
-difference is **speed** (heap theories are instantly ready; others are parsed
-and checked once). The startup session (`HOL`, `HOL-Analysis`, …) only decides
-what comes *precompiled/fast*, not what you may import.
+not in the heap from its `.thy` source: `thy_loader` (`library/REPL.ML`) hands it
+to Isabelle_RPC's `PIDE_Loader`, which loads it through the PIDE document of the
+server's session, as Isabelle/jEdit does. The startup session (`HOL`,
+`HOL-Analysis`, …) only decides what comes *precompiled/fast*, not what you may
+import.
 
 **Real precondition** (not "must be in the heap"): the `.thy` source must be
 **locatable** — via the session's sources/import search path, the REPL's
-`import_dir`, or relative to the target theory. If not, you get
-`Bad theory import <name>`.
+`import_dir`, or relative to the target theory. If not, the loader's error names
+the theory or the file it could not load.
+
+Differences between heap theories and theories loaded from files:
+
+- A loaded file is read **once per server process**; edits on disk are not seen
+  until the server restarts.
+- A loaded file is named by its folder: `S.<file name>` if a known session `S`
+  owns the folder, else `Draft.<file name>`. A `Draft` theory is requested by its
+  path, not by that name; inside a `Draft` file write `imports "HOL.List"`, not
+  `imports List`.
+- Two different files with one long name: the second is refused.
+- Inside the REPL process, `Build.get_theory` / `Build.lookup_theory` see only
+  heap theories; use `PIDE_Loader.get_theory` / `PIDE_Loader.lookup_theory`
+  (heap theories and loaded theories).
 
 ## Directory Structure
 
@@ -86,7 +99,7 @@ MessagePack library for ML (binary serialization format)
 ### Entry Point
 - **`Isa_REPL.thy`** - Main theory file loading all ML components (see load order above)
 - **`ROOT`** - Isabelle session definition
-- **`repl_server.sh`** - Shell script to start REPL server
+- **`src/scala/repl_tool.scala`** - The `isabelle REPL` tool that starts the server (prebuilt in `lib/isa_repl.jar`)
 - **`repl_server_watch_dog.sh`** - Watchdog wrapper that restarts the server
 - **`README.md`** - Installation and usage overview
 
@@ -101,8 +114,9 @@ MessagePack library for ML (binary serialization format)
 
 1. **Install client (optional):** `pip install IsaREPL`
 2. **Register component & start server:** e.g. `isabelle components -u .`, then
-   `./repl_server.sh 127.0.0.1:6666 HOL ./tmp -o threads=16`
-   (You must explicitly set the thread count; Isabelle defaults to 8 cores.)
+   `isabelle REPL -l HOL -o threads=16 127.0.0.1:6666 <absolute output dir>`
+   (options first; `isabelle REPL -?` lists them. You must explicitly set the thread
+   count; Isabelle defaults to 8 cores.)
 3. **Connect from a client:** Use `IsaREPL.Client` (Python) or the OCaml client under `clients/ocaml/`.
 
 ## Common Use Cases
@@ -127,6 +141,10 @@ For concrete usage examples, see the scripts in `examples/`:
 - Modify `Isa_REPL.thy` to load new ML files (remember to add them to the load list)
 
 ### To debug:
-- Check server logs from `repl_server.sh` / `repl_server_watch_dog.sh`
+- Check the console output of `isabelle REPL` or `repl_server_watch_dog.sh`. To see prover
+  messages, start the server with `-L FILE`: FILE always gets the messages of theories loaded
+  from files; the server's own messages (those of `eval`, `file` and plugins, including
+  `writeln` traces you add to the ML they run) are muted by default and reach FILE only if the
+  server is also started with `-V`.
 - Enable debug mode in the client
 - Trace ML execution in `library/REPL.ML`
