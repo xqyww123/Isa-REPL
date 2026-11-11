@@ -869,7 +869,7 @@ end
    so the tool exits non-zero.  The failure render is guarded as in build.ML:
    exn_message_list can itself raise, and then the tool would hear no answer and
    wait out -T. *)
-val isa_repl_started = Synchronized.var "Isa_REPL.startup" false;
+val isa_repl_started = Synchronized.var \<^unchecked_name>\<open>Isa_REPL.startup\<close> false;
 fun isa_repl_startup [addr, dir, mute] =
       (case Exn.capture_body (fn () =>
               (Synchronized.change isa_repl_started
@@ -877,15 +877,17 @@ fun isa_repl_startup [addr, dir, mute] =
                if Value.parse_bool mute then REPL.disable_output () else ();
                REPL_Server.startup (Path.explode dir) NONE addr)) of
         Exn.Res thread =>
-          (Output.protocol_message [Markup.function "Isa_REPL.ready"] [];
-           ignore (Isabelle_Thread.fork (Isabelle_Thread.params "Isa_REPL.supervisor") (fn () =>
-             (Isabelle_Thread.join thread;
-              Output.protocol_message [Markup.function "Isa_REPL.stopped"] []))))
+          (Output.protocol_message [Markup.function \<^unchecked_name>\<open>Isa_REPL.ready\<close>] [];
+           ignore (Isabelle_Thread.fork
+             (Isabelle_Thread.params \<^unchecked_name>\<open>Isa_REPL.supervisor\<close>) (fn () =>
+               (Isabelle_Thread.join thread;
+                Output.protocol_message
+                  [Markup.function \<^unchecked_name>\<open>Isa_REPL.stopped\<close>] []))))
       | Exn.Exn exn =>
-          Output.protocol_message [Markup.function "Isa_REPL.failed"]
+          Output.protocol_message [Markup.function \<^unchecked_name>\<open>Isa_REPL.failed\<close>]
             [[XML.Text (cat_lines
                 (case Exn.capture Runtime.exn_message_list exn of
                   Exn.Res msgs => msgs
                 | Exn.Exn _ (*sic!*) => ["CRASHED"]))]])
   | isa_repl_startup _ = raise Match;
-val _ = Protocol_Command.define "Isa_REPL.startup" isa_repl_startup;
+val _ = Protocol_Command.define \<^unchecked_name>\<open>Isa_REPL.startup\<close> isa_repl_startup;

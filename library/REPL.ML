@@ -251,7 +251,7 @@ fun the_current_worker_ID () = Option.map #1 (Thread_Data.get Session_ID)
 (** Message **)
 
 val message_buffer : message list Inttab.table Synchronized.var
-  = Synchronized.var "REPL.message_buffer" Inttab.empty
+  = Synchronized.var \<^unchecked_name>\<open>REPL.message_buffer\<close> Inttab.empty
 
 fun get_and_clean_message' wid =
   Synchronized.change_result message_buffer (fn tab =>
