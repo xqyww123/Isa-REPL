@@ -64,7 +64,8 @@ class CommandOutput:
         command: The name of the command
         range: A tuple of (begin_pos, end_pos) indicating the range of the command,
                where each position is an IsabellePosition
-        output: A list of (MessageType, str) tuples (the same output in Isabelle's output panel)
+        output: Always empty: what the command prints (Isabelle's Output panel) is not
+                collected (REPL.init_printers is off). Kept so clients need not change.
         latex: LaTeX output
         flags: Flags about the Isabelle state after executing the command
         level: The level of nesting context (an integer)

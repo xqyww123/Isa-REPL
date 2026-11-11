@@ -6,7 +6,8 @@ Unofficial support for Isabelle's Read-Eval-Print-Loop.
 **Features**
 - Python Client, easy for Machine Learning.
 - Full support for all Isabelle commands
-- Tracing the proof state and the output panel for each step of evaluation.
+- Tracing the proof state and the errors of each step of evaluation. (What a command
+  prints, Isabelle's Output panel, is not collected: the result's `output` field is empty.)
 	- Plugin: collecting data from Isabelle's internal representations by plugins written in Isabelle/ML ([example](./examples/example_plugin.py)).
 - Socket based remote communication
 - Socket based Concurrency
